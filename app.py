@@ -45,6 +45,7 @@ def get_data_from_db():
 # Route to display data on the UI
 @app.route('/')
 def index():
+    print("run")
     # Get data from the database
     data = get_data_from_db()
     print(data)
