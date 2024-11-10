@@ -3,14 +3,23 @@ import psycopg2
 from psycopg2 import OperationalError, DatabaseError
 import os
 from dotenv import load_dotenv
+from flask_cors import CORS  # Import CORS
 
 app = Flask(__name__)
+
+
 
 # Load environment variables from a .env file
 load_dotenv()
 
 # Fetch database URL with error handling for missing environment variable
 DATABASE_URL = os.getenv('DATABASE_URL')
+
+
+
+
+
+
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set. Please set it in your .env file.")
 
