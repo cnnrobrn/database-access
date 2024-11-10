@@ -15,16 +15,12 @@ load_dotenv()
 # Fetch database URL with error handling for missing environment variable
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-
-
-
-
-
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set. Please set it in your .env file.")
 
 # Function to query data from the PostgreSQL database
 def get_data_from_db():
+    print("this app is working")
     try:
         # Connect to the PostgreSQL database (replace with your connection details)
         conn = psycopg2.connect(DATABASE_URL)
