@@ -47,6 +47,7 @@ def get_data_from_db():
 def index():
     # Get data from the database
     data = get_data_from_db()
+    print(data)
     
     if data is None:
         return render_template('error.html', message="Could not fetch data from the database. Please try again later.")
