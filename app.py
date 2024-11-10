@@ -21,7 +21,7 @@ def get_data_from_db():
     cursor = conn.cursor()
     
     # Execute the query to get data from the phone_numbers and outfits tables
-    cursor.execute("SELECT pn.id, pn.phone_number, o.image_data, o.description FROM phone_numbers pn LEFT JOIN outfits o ON pn.id = o.phone_id")
+    cursor.execute("SELECT o.image_data, o.description FROM outfits")
     rows = cursor.fetchall()
     
     # Close the connection
