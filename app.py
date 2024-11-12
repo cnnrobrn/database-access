@@ -17,7 +17,7 @@ def get_data_from_db():
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-        cursor.execute("SELECT image_data, description FROM outfits")
+        cursor.execute("SELECT image_data, description FROM outfits o left join phone_numbers pn on o.phone_id = pn.id order by o.id desc ")
         rows = cursor.fetchall()
     except Exception as e:
         app.logger.error(f"Database error: {e}")
