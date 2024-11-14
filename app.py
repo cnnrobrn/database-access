@@ -44,16 +44,6 @@ def format_phone_number(phone_number):
         phone_number = "+1" + phone_number
     return phone_number
 
-# Taking user input
-user_input = input("Enter your phone number: ")
-formatted_number = format_phone_number(user_input)
-
-# Outputting the formatted number
-print("Formatted Phone Number:", formatted_number)
-
-# Example of usage
-# If user inputs "555-123-4567" the output will be: "+15551234567"
-
 
 @app.route('/api/data', methods=['GET'])
 def api_data():
