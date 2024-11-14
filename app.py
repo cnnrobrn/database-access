@@ -35,12 +35,33 @@ def get_data_from_db(phone_number):
             conn.close()
     return rows
 
+def format_phone_number(phone_number):
+    # Removing any extra spaces or formatting characters
+    phone_number = phone_number.strip().replace("-", "").replace("(", "").replace(")", "").replace(" ", "")
+    
+    # Adding country code prefix "+1" if not present
+    if not phone_number.startswith("+1"):
+        phone_number = "+1" + phone_number
+    return phone_number
+
+# Taking user input
+user_input = input("Enter your phone number: ")
+formatted_number = format_phone_number(user_input)
+
+# Outputting the formatted number
+print("Formatted Phone Number:", formatted_number)
+
+# Example of usage
+# If user inputs "555-123-4567" the output will be: "+15551234567"
+
+
 @app.route('/api/data', methods=['GET'])
 def api_data():
     phone_number = request.args.get('phone_number')
     if not phone_number:
         return jsonify({'error': 'Phone number is required'}), 400
-    data = get_data_from_db(phone_number)
+    formatted_phone = format_phone_number(phone_number)
+    data = get_data_from_db(formatted_phone)
     if data is None:
         return jsonify({'error': 'Database error'}), 500
     if len(data) == 0:
