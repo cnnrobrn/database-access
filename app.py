@@ -47,7 +47,9 @@ def format_phone_number(phone_number):
 
 @app.route('/api/data', methods=['GET'])
 def api_data():
+    print("Start")
     phone_number = request.args.get('phone_number')
+    print(phone_number)
     if not phone_number:
         return jsonify({'error': 'Phone number is required'}), 400
     formatted_phone = format_phone_number(phone_number)
