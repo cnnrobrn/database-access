@@ -13,12 +13,12 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set.")
 
-def get_outfits_from_db(outfit_id):
+def get_items_from_db(outfit_id):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, outfit_id, url, price, photo_url 
+            SELECT id, outfit_id, description 
             FROM items 
             WHERE outfit_id = %s 
             ORDER BY id DESC
@@ -76,12 +76,12 @@ def api_data():
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} for outfit_id, image_data, description in data]
     return jsonify(data_list)
 
-@app.route('/api/outfit', methods=['GET'])
+@app.route('/api/items', methods=['GET'])
 def api_outfit():
     outfit_id = request.args.get('outfit_id')
     if not outfit_id:
         return jsonify({'error': 'Outfit ID is required'}), 400
-    data = get_outfits_from_db(outfit_id)
+    data = get_items_from_db(outfit_id)
     if data is None:
         return jsonify({'error': 'Database error'}), 500
     if len(data) == 0:
