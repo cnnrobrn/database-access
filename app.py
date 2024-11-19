@@ -161,9 +161,30 @@ def get_items_from_db(outfit_id):
             cursor.close()
         if conn:
             conn.close()
+def clean_url(url):
+    if not url:
+        return ''
+    
+    # Remove '/url?q=' prefix if it exists
+    if url.startswith('/url?q='):
+        url = url[7:]
+    
+    # URL decode
+    try:
+        url = urllib.parse.unquote(url)
+    except:
+        pass
+    
+    # Ensure https:// prefix
+    if not url.startswith('http://') and not url.startswith('https://'):
+        url = 'https://' + url
+    
+    return url
+
+
 @app.route('/api/items', methods=['GET'])
-def api_outfit():
-    outfit_id = request.args.get('outfit_id')
+def api_items():
+    outfit_id = request.args.get('outfit_id') 
     if not outfit_id:
         return jsonify({'error': 'Outfit ID is required'}), 400
     try:
@@ -175,6 +196,12 @@ def api_outfit():
         return jsonify({'error': 'Database error'}), 500
     if len(items) == 0:
         return jsonify({'error': 'No items found for this outfit'}), 404
+    # Clean URLs in the response
+    for item in items:
+        if 'links' in item:
+            for link in item['links']:
+                if 'url' in link:
+                    link['url'] = clean_url(link['url'])
     return jsonify(items)
     
 if __name__ == '__main__':
