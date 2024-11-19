@@ -64,27 +64,6 @@ def api_links():
             conn.close()
 
 
-def get_items_from_db(outfit_id):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT id, outfit_id, description 
-            FROM items 
-            WHERE outfit_id = %s 
-            ORDER BY id DESC
-        """, (outfit_id,))
-        rows = cursor.fetchall()
-    except Exception as e:
-        app.logger.error(f"Database error: {e}")
-        return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-    return rows
-
 def get_data_from_db(phone_number):
     try:
         conn = psycopg2.connect(DATABASE_URL)
@@ -127,18 +106,67 @@ def api_data():
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} for outfit_id, image_data, description in data]
     return jsonify(data_list)
 
+def get_items_from_db(outfit_id):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        # Updated query to get all required fields
+        cursor.execute("""
+            SELECT i.id, i.outfit_id, i.description, l.url, l.price, l.photo_url
+            FROM items i
+            LEFT JOIN links l ON l.item_id = i.id
+            WHERE i.outfit_id = %s
+            ORDER BY i.id DESC
+        """, (outfit_id,))
+        
+        rows = cursor.fetchall()
+        return rows
+    except Exception as e:
+        app.logger.error(f"Database error: {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 @app.route('/api/items', methods=['GET'])
 def api_outfit():
     outfit_id = request.args.get('outfit_id')
+    
+    # Input validation
     if not outfit_id:
         return jsonify({'error': 'Outfit ID is required'}), 400
+    
+    try:
+        # Convert outfit_id to integer
+        outfit_id = int(outfit_id)
+    except ValueError:
+        return jsonify({'error': 'Invalid outfit ID format'}), 400
+
     data = get_items_from_db(outfit_id)
+    
     if data is None:
         return jsonify({'error': 'Database error'}), 500
+    
     if len(data) == 0:
         return jsonify({'error': 'No items found for this outfit'}), 404
-    data_list = [{'item_id': item_id, 'outfit_id': outfit_id, 'url': url, 'price': price, 'photo_url': photo_url} for item_id, outfit_id, url, price, photo_url in data]
-    return jsonify(data_list)
 
+    # Transform the data
+    data_list = []
+    for row in data:
+        item = {
+            'item_id': row[0],
+            'outfit_id': row[1],
+            'description': row[2],
+            'url': row[3],
+            'price': row[4],
+            'photo_url': row[5]
+        }
+        data_list.append(item)
+
+    return jsonify(data_list)
+    
 if __name__ == '__main__':
     app.run(debug=False)
