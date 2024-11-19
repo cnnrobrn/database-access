@@ -13,6 +13,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set.")
 
+
 def get_items_from_db(outfit_id):
     try:
         conn = psycopg2.connect(DATABASE_URL)
