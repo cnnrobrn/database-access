@@ -203,6 +203,39 @@ def api_items():
                 if 'url' in link:
                     link['url'] = clean_url(link['url'])
     return jsonify(items)
+
+
+
+@app.route('/api/data_all', methods=['GET'])
+def api_data_all():
+    data = get_all_data_from_db()
+    if data is None:
+        return jsonify({'error': 'Database error'}), 500
+    if len(data) == 0:
+        return jsonify({'error': 'No outfits found for this phone number'}), 404
+    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} for outfit_id, image_data, description in data]
+    return jsonify(data_list)
+
+def get_all_data_from_db():
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT o.id, o.image_data, o.description 
+            FROM outfits o 
+            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
+            ORDER BY o.id DESC LIMIT 100
+        """)
+        rows = cursor.fetchall()
+    except Exception as e:
+        app.logger.error(f"Database error: {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+    return rows
     
 if __name__ == '__main__':
     app.run(debug=False)
