@@ -221,11 +221,10 @@ def get_all_data_from_db():
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT o.id, o.image_data, o.description 
+            SELECT DISTINCT o.id, o.image_data, o.description 
             FROM outfits o 
-            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
-            ORDER BY o.id DESC LIMIT 100
-        """)
+            ORDER BY o.id DESC
+        """)  # Removed LIMIT 100 to get all outfits
         rows = cursor.fetchall()
     except Exception as e:
         app.logger.error(f"Database error: {e}")
