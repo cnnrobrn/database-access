@@ -95,15 +95,18 @@ def format_phone_number(phone_number):
 @app.route('/api/data', methods=['GET'])
 def api_data():
     phone_number = request.args.get('phone_number')
+    print(f"Received phone number: {phone_number}")  # Add this debug line
     if not phone_number:
         return jsonify({'error': 'Phone number is required'}), 400
     formatted_phone = format_phone_number(phone_number)
+    print(f"Formatted phone number: {formatted_phone}")  # Add this debug line
     data = get_data_from_db(formatted_phone)
     if data is None:
         return jsonify({'error': 'Database error'}), 500
     if len(data) == 0:
-        return jsonify({'error': 'No outfits found for this phone number'}), 404
-    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} for outfit_id, image_data, description in data]
+        return jsonify({'error': f'No outfits found for phone number: {formatted_phone}'}), 404
+    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
+                 for outfit_id, image_data, description in data]
     return jsonify(data_list)
 
 def get_items_from_db(outfit_id):
