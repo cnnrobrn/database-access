@@ -175,7 +175,7 @@ def api_items():
 def api_data_all():
     # Get pagination parameters from request
     page = request.args.get('page', default=1, type=int)
-    per_page = request.args.get('per_page', default=10, type=int)  # 10 items per page by default
+    per_page = request.args.get('per_page', default=10, type=int)
     
     data = get_all_data_from_db(page, per_page)
     if data is None:
@@ -185,7 +185,12 @@ def api_data_all():
         
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
                  for outfit_id, image_data, description in data]
-    return jsonify(data_list)
+    
+    # Return total count along with the data
+    return jsonify({
+        'outfits': data_list,
+        'has_more': len(data_list) == per_page  # If we got full page, there might be more
+    })
 
 def get_all_data_from_db(page, per_page):
     try:
