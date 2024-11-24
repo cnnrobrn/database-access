@@ -64,50 +64,12 @@ def api_links():
             conn.close()
 
 
-def get_data_from_db(phone_number):
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT o.id, o.image_data, o.description 
-            FROM outfits o 
-            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
-            WHERE pn.phone_number = %s 
-            ORDER BY o.id DESC
-        """, (phone_number,))
-        rows = cursor.fetchall()
-    except Exception as e:
-        app.logger.error(f"Database error: {e}")
-        return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-    return rows
-
 def format_phone_number(phone_number):
     phone_number = phone_number.strip().replace("-", "").replace("(", "").replace(")", "").replace(" ", "")
     if not phone_number.startswith("+1"):
         phone_number = "+1" + phone_number
     return phone_number
 
-@app.route('/api/data', methods=['GET'])
-def api_data():
-    phone_number = request.args.get('phone_number')
-    print(f"Received phone number: {phone_number}")  # Add this debug line
-    if not phone_number:
-        return jsonify({'error': 'Phone number is required'}), 400
-    formatted_phone = format_phone_number(phone_number)
-    print(f"Formatted phone number: {formatted_phone}")  # Add this debug line
-    data = get_data_from_db(formatted_phone)
-    if data is None:
-        return jsonify({'error': 'Database error'}), 500
-    if len(data) == 0:
-        return jsonify({'error': f'No outfits found for phone number: {formatted_phone}'}), 404
-    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
-                 for outfit_id, image_data, description in data]
-    return jsonify(data_list)
 
 def get_items_from_db(outfit_id):
     try:
@@ -211,23 +173,84 @@ def api_items():
 
 @app.route('/api/data_all', methods=['GET'])
 def api_data_all():
-    data = get_all_data_from_db()
+    # Get pagination parameters from request
+    page = request.args.get('page', default=1, type=int)
+    per_page = request.args.get('per_page', default=10, type=int)  # 10 items per page by default
+    
+    data = get_all_data_from_db(page, per_page)
     if data is None:
         return jsonify({'error': 'Database error'}), 500
     if len(data) == 0:
-        return jsonify({'error': 'No outfits found for this phone number'}), 404
-    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} for outfit_id, image_data, description in data]
+        return jsonify({'error': 'No outfits found'}), 404
+        
+    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
+                 for outfit_id, image_data, description in data]
     return jsonify(data_list)
 
-def get_all_data_from_db():
+def get_all_data_from_db(page, per_page):
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
+        
+        # Calculate offset
+        offset = (page - 1) * per_page
+        
         cursor.execute("""
             SELECT DISTINCT o.id, o.image_data, o.description 
             FROM outfits o 
             ORDER BY o.id DESC
-        """)  # Removed LIMIT 100 to get all outfits
+            LIMIT %s OFFSET %s
+        """, (per_page, offset))
+        
+        rows = cursor.fetchall()
+    except Exception as e:
+        app.logger.error(f"Database error: {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+    return rows
+
+@app.route('/api/data', methods=['GET'])
+def api_data():
+    phone_number = request.args.get('phone_number')
+    page = request.args.get('page', default=1, type=int)
+    per_page = request.args.get('per_page', default=10, type=int)
+    
+    if not phone_number:
+        return jsonify({'error': 'Phone number is required'}), 400
+        
+    formatted_phone = format_phone_number(phone_number)
+    data = get_data_from_db(formatted_phone, page, per_page)
+    
+    if data is None:
+        return jsonify({'error': 'Database error'}), 500
+    if len(data) == 0:
+        return jsonify({'error': f'No outfits found for phone number: {formatted_phone}'}), 404
+        
+    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
+                 for outfit_id, image_data, description in data]
+    return jsonify(data_list)
+
+def get_data_from_db(phone_number, page, per_page):
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        # Calculate offset
+        offset = (page - 1) * per_page
+        
+        cursor.execute("""
+            SELECT o.id, o.image_data, o.description 
+            FROM outfits o 
+            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
+            WHERE pn.phone_number = %s 
+            ORDER BY o.id DESC
+            LIMIT %s OFFSET %s
+        """, (phone_number, per_page, offset))
+        
         rows = cursor.fetchall()
     except Exception as e:
         app.logger.error(f"Database error: {e}")
