@@ -237,7 +237,12 @@ def api_data():
         
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
                  for outfit_id, image_data, description in data]
-    return jsonify(data_list)
+    
+    # Return in same format as global feed
+    return jsonify({
+        'outfits': data_list,
+        'has_more': len(data_list) == per_page
+    })
 
 def get_data_from_db(phone_number, page, per_page):
     try:
