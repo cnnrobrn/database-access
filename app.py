@@ -3,6 +3,7 @@ from flask_cors import CORS
 import psycopg2
 import os
 from dotenv import load_dotenv
+import cohere  # Import the Cohere library
 
 app = Flask(__name__)
 CORS(app)
@@ -10,8 +11,14 @@ CORS(app)
 load_dotenv()
 
 DATABASE_URL = os.getenv('DATABASE_URL')
+YOUR_COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL environment variable not set.")
+
+co = cohere.Client('YOUR_COHERE_API_KEY')  # Initialize Cohere client
+# Call the function to generate and store embeddings
+generate_and_store_embeddings()
+
 
 @app.route('/api/links', methods=['GET'])
 def api_links():
@@ -271,6 +278,61 @@ def get_data_from_db(phone_number, page, per_page):
         if conn:
             conn.close()
     return rows
+
+def generate_and_store_embeddings():
+    """
+    Generates embeddings for all clothing items and stores them 
+    along with the item IDs in a new database table.
+    """
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+
+        # 1. Create a table to store embeddings (if it doesn't exist)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS item_embeddings (
+                item_id INT PRIMARY KEY,
+                embedding VECTOR(1024)  -- Adjust dimensionality if needed
+            )
+        """)
+        conn.commit()
+
+        # 2. Fetch all items with their descriptions and image features
+        cursor.execute("""
+            SELECT i.id, i.description, o.image_data 
+            FROM items i
+            JOIN outfits o ON i.outfit_id = o.id
+        """)
+        items = cursor.fetchall()
+
+        for item_id, description, image_data in items:
+            # 3. Combine text and image features (you'll need image processing here)
+            # For now, let's assume you have a function to extract image features:
+            image_features = extract_image_features(image_data)  
+            combined_text = f"{description} {image_features}" 
+
+            # 4. Generate embeddings using Cohere
+            embedding = co.embed(texts=[combined_text], model="large").embeddings[0]
+
+            # 5. Store the embedding in the database
+            cursor.execute("""
+                INSERT INTO item_embeddings (item_id, embedding) 
+                VALUES (%s, %s)
+                ON CONFLICT (item_id) DO UPDATE 
+                SET embedding = EXCLUDED.embedding
+            """, (item_id, embedding)) 
+        conn.commit()
+
+    except Exception as e:
+        app.logger.error(f"Database error: {e}")
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+
     
 if __name__ == '__main__':
     app.run(debug=False)
