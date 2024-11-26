@@ -265,7 +265,7 @@ def generate_and_store_embeddings():
                 # Add input_type parameter for v3.0 models
                 embeddings = co.embed(
                     texts=descriptions, 
-                    model="embed-english-light-v3.0",
+                    model="embed-english-v3.0",
                     input_type="search_query"  # or "search_document" depending on your use case
                 ).embeddings
                 
