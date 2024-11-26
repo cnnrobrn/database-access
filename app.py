@@ -10,6 +10,7 @@ CORS(app)
 
 load_dotenv()
 
+
 DATABASE_URL = os.getenv('DATABASE_URL')
 YOUR_COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
 if not DATABASE_URL:
