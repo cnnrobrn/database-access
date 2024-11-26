@@ -20,6 +20,11 @@ import cohere
 import urllib.parse
 from functools import wraps
 
+
+# Add these at the top of your file with other constants
+EMBED_MODEL = "embed-english-light-v3.0"
+EMBED_DIMENSIONS = 1024
+
 # ===============================
 # Application Initialization
 # ===============================
@@ -245,11 +250,14 @@ def generate_and_store_embeddings():
                 cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
                 conn.commit()
 
-                # Create embeddings table
-                cursor.execute("""
+                # Drop existing table if it exists with wrong dimensions
+                cursor.execute("DROP TABLE IF EXISTS item_embeddings;")
+                
+                # Create embeddings table with correct dimensions (1024 for embed-english-light-v3.0)
+                cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS item_embeddings (
                         item_id INT PRIMARY KEY,
-                        embedding vector(1024)
+                        embedding vector({EMBED_DIMENSIONS})
                     )
                 """)
                 conn.commit()
@@ -326,11 +334,15 @@ def rag_search():
     if not item_description:
         return jsonify({"error": "Item description is required"}), 400
 
-    query_embedding = co.embed(texts=[item_description], model="large").embeddings[0]
+    # Use the same model as in generate_and_store_embeddings
+    query_embedding = co.embed(
+        texts=[item_description], 
+        model="embed-english-light-v3.0",
+        input_type="search_query"
+    ).embeddings[0]
     
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
-            # Cast the array to vector type
             cursor.execute("""
                 SELECT item_id, embedding <=> %s::vector as distance
                 FROM item_embeddings
