@@ -262,7 +262,7 @@ def generate_and_store_embeddings():
                     break
                 
                 descriptions = [item[1] for item in items]
-                embeddings = co.embed(texts=descriptions, model="embed-english-light").embeddings
+                embeddings = co.embed(texts=descriptions, model="embed-english-light-v3.0").embeddings
                 
                 for (item_id, _), embedding in zip(items, embeddings):
                     # Cast the array to vector type during insertion
