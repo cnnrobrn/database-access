@@ -253,7 +253,7 @@ def generate_and_store_embeddings():
                 # Drop existing table if it exists with wrong dimensions
                 cursor.execute("DROP TABLE IF EXISTS item_embeddings;")
                 
-                # Create embeddings table with correct dimensions (1024 for embed-english-light-v3.0)
+                # Create embeddings table with correct dimensions (1024 for embed-english-v3.0)
                 cursor.execute(f"""
                     CREATE TABLE IF NOT EXISTS item_embeddings (
                         item_id INT PRIMARY KEY,
@@ -297,7 +297,7 @@ def generate_and_store_embeddings():
                     try:
                         embeddings = co.embed(
                             texts=descriptions,
-                            model="embed-english-light-v3.0",
+                            model=EMBED_MODEL,
                             input_type="search_query"
                         ).embeddings
                         
