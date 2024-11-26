@@ -238,46 +238,83 @@ def get_data_from_db(phone_number, page, per_page):
 
 def generate_and_store_embeddings():
     """Generate embeddings for all clothing items and store them in the database."""
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            # Enable vector extension
-            cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
-            conn.commit()
-
-            # Create embeddings table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS item_embeddings (
-                    item_id INT PRIMARY KEY,
-                    embedding vector(1024)
-                )
-            """)
-            conn.commit()
-
-            # Process items in batches
-            batch_size = 100
-            cursor.execute("SELECT id, description FROM items")
-            while True:
-                items = cursor.fetchmany(batch_size)
-                if not items:
-                    break
-                
-                descriptions = [item[1] for item in items]
-                # Add input_type parameter for v3.0 models
-                embeddings = co.embed(
-                    texts=descriptions, 
-                    model="embed-english-v3.0",
-                    input_type="search_query"  # or "search_document" depending on your use case
-                ).embeddings
-                
-                for (item_id, _), embedding in zip(items, embeddings):
-                    cursor.execute("""
-                        INSERT INTO item_embeddings (item_id, embedding) 
-                        VALUES (%s, %s::vector)
-                        ON CONFLICT (item_id) DO UPDATE 
-                        SET embedding = EXCLUDED.embedding
-                    """, (item_id, embedding))
-                
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                # Enable vector extension
+                cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
                 conn.commit()
+
+                # Create embeddings table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS item_embeddings (
+                        item_id INT PRIMARY KEY,
+                        embedding vector(1024)
+                    )
+                """)
+                conn.commit()
+
+                # First check if there are any items to process
+                cursor.execute("SELECT COUNT(*) FROM items")
+                count = cursor.fetchone()[0]
+                
+                if count == 0:
+                    app.logger.warning("No items found in the database to generate embeddings for")
+                    return
+
+                # Process items in batches
+                batch_size = 100
+                offset = 0
+                
+                while True:
+                    cursor.execute("""
+                        SELECT id, description 
+                        FROM items 
+                        WHERE id NOT IN (SELECT item_id FROM item_embeddings)
+                        ORDER BY id 
+                        LIMIT %s OFFSET %s
+                    """, (batch_size, offset))
+                    
+                    items = cursor.fetchall()
+                    if not items:
+                        break
+                    
+                    app.logger.info(f"Processing batch of {len(items)} items")
+                    
+                    descriptions = [item[1] for item in items if item[1]]  # Filter out None descriptions
+                    if not descriptions:
+                        offset += batch_size
+                        continue
+                    
+                    try:
+                        embeddings = co.embed(
+                            texts=descriptions,
+                            model="embed-english-light-v3.0",
+                            input_type="search_query"
+                        ).embeddings
+                        
+                        # Insert embeddings in batches
+                        for (item_id, _), embedding in zip(items, embeddings):
+                            if embedding is not None:
+                                cursor.execute("""
+                                    INSERT INTO item_embeddings (item_id, embedding) 
+                                    VALUES (%s, %s::vector)
+                                    ON CONFLICT (item_id) DO UPDATE 
+                                    SET embedding = EXCLUDED.embedding
+                                """, (item_id, embedding))
+                        
+                        conn.commit()
+                        app.logger.info(f"Successfully processed batch starting at offset {offset}")
+                        
+                    except Exception as e:
+                        app.logger.error(f"Error processing batch at offset {offset}: {str(e)}")
+                        conn.rollback()
+                    
+                    offset += batch_size
+
+    except Exception as e:
+        app.logger.error(f"Failed to generate embeddings: {str(e)}")
+        raise
 # ===============================
 # Route Handlers
 # ===============================
