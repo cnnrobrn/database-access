@@ -3,3 +3,4 @@ psycopg2
 gunicorn
 python-dotenv
 flask-cors
+cohere
