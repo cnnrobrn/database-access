@@ -244,7 +244,7 @@ def generate_and_store_embeddings():
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
             conn.commit()
 
-            # Create embeddings table with explicit vector type
+            # Create embeddings table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS item_embeddings (
                     item_id INT PRIMARY KEY,
@@ -262,10 +262,14 @@ def generate_and_store_embeddings():
                     break
                 
                 descriptions = [item[1] for item in items]
-                embeddings = co.embed(texts=descriptions, model="embed-english-light-v3.0").embeddings
+                # Add input_type parameter for v3.0 models
+                embeddings = co.embed(
+                    texts=descriptions, 
+                    model="embed-english-light-v3.0",
+                    input_type="search_query"  # or "search_document" depending on your use case
+                ).embeddings
                 
                 for (item_id, _), embedding in zip(items, embeddings):
-                    # Cast the array to vector type during insertion
                     cursor.execute("""
                         INSERT INTO item_embeddings (item_id, embedding) 
                         VALUES (%s, %s::vector)
