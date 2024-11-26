@@ -17,7 +17,7 @@ if not DATABASE_URL:
 
 co = cohere.Client('YOUR_COHERE_API_KEY')  # Initialize Cohere client
 # Call the function to generate and store embeddings
-generate_and_store_embeddings()
+
 
 
 @app.route('/api/links', methods=['GET'])
@@ -331,8 +331,9 @@ def generate_and_store_embeddings():
         if conn:
             conn.close()
 
-
+generate_and_store_embeddings()
 
     
 if __name__ == '__main__':
     app.run(debug=False)
+    
