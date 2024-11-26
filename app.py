@@ -3,7 +3,96 @@ from flask_cors import CORS
 import psycopg2
 import os
 from dotenv import load_dotenv
-import cohere  # Import the Cohere library
+import cohere
+import urllib.parse
+from functools import wraps
+
+app = Flask(__name__)
+CORS(app)
+
+# Load environment variables
+load_dotenv()
+
+# Environment variable configuration with defaults
+DATABASE_URL = os.getenv('DATABASE_URL')
+COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
+
+# Validate required environment variables
+def validate_environment():
+    missing_vars = []
+    if not DATABASE_URL:
+        missing_vars.append('DATABASE_URL')
+    if not COHERE_API_KEY:
+        missing_vars.append('YOUR_COHERE_API_KEY')
+    
+    if missing_vars:
+        raise EnvironmentError(
+            f"Missing required environment variables: {', '.join(missing_vars)}. "
+            "Please set these in your .env file or deployment environment."
+        )
+
+# Database connection helper
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        app.logger.error(f"Database connection error: {str(e)}")
+        raise
+
+# Error handling decorator
+def handle_errors(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except psycopg2.Error as e:
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({'error': 'Database error occurred'}), 500
+        except Exception as e:
+            app.logger.error(f"Unexpected error: {str(e)}")
+            return jsonify({'error': 'An unexpected error occurred'}), 500
+    return wrapper
+
+# Initialize Cohere client
+try:
+    co = cohere.Client(COHERE_API_KEY)
+except Exception as e:
+    app.logger.error(f"Cohere client initialization error: {str(e)}")
+    raise
+
+@app.before_first_request
+def initialize_app():
+    validate_environment()
+    try:
+        generate_and_store_embeddings()
+    except Exception as e:
+        app.logger.error(f"Failed to generate embeddings: {str(e)}")
+        # Don't raise here - allow app to start even if initial embedding generation fails
+
+@app.route('/rag_search', methods=['POST'])
+@handle_errors
+def rag_search():
+    item_description = request.json.get("item_description")
+    if not item_description:
+        return jsonify({"error": "Item description is required"}), 400
+
+    query_embedding = co.embed(texts=[item_description], model="large").embeddings[0]
+    
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT item_id, embedding <=> %s as distance
+                FROM item_embeddings
+                ORDER BY distance ASC
+                LIMIT 1
+            """, (query_embedding,))
+            
+            result = cursor.fetchone()
+            if not result:
+                return jsonify({"error": "No matching items found"}), 404
+            
+            return jsonify({"item_id": result[0]})
 
 app = Flask(__name__)
 CORS(app)
@@ -315,61 +404,47 @@ def get_data_from_db(phone_number, page, per_page):
     return rows
 
 def generate_and_store_embeddings():
-    """
-    Generates embeddings for all clothing items and stores them 
-    along with the item IDs in a new database table.
-    """
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
+    """Generate embeddings for all clothing items and store them in the database."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cursor:
+            # Enable vector extension
+            cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
+            conn.commit()
 
-        # First enable the vector extension - add this explicit command
-        cursor.execute("""
-            CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;
-        """)
-        conn.commit()
-
-        # Create the embeddings table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS item_embeddings (
-                item_id INT PRIMARY KEY,
-                embedding vector(1024)
-            )
-        """)
-        conn.commit()
-
-        # Fetch items (removed image_data since we're not using it)
-        cursor.execute("""
-            SELECT i.id, i.description
-            FROM items i
-        """)
-        items = cursor.fetchall()
-
-        for item_id, description in items:
-            # Generate embedding just from description text
-            embedding = co.embed(texts=[description], model="large").embeddings[0]
-            
+            # Create embeddings table
             cursor.execute("""
-                INSERT INTO item_embeddings (item_id, embedding) 
-                VALUES (%s, %s)
-                ON CONFLICT (item_id) DO UPDATE 
-                SET embedding = EXCLUDED.embedding
-            """, (item_id, embedding))
-            
-        conn.commit()
+                CREATE TABLE IF NOT EXISTS item_embeddings (
+                    item_id INT PRIMARY KEY,
+                    embedding vector(1024)
+                )
+            """)
+            conn.commit()
 
-    except Exception as e:
-        app.logger.error(f"Database error: {str(e)}")
-        raise e  # Re-raise the exception to see the full error in logs
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+            # Fetch and process items in batches
+            batch_size = 100
+            cursor.execute("SELECT id, description FROM items")
+            while True:
+                items = cursor.fetchmany(batch_size)
+                if not items:
+                    break
+                
+                descriptions = [item[1] for item in items]
+                embeddings = co.embed(texts=descriptions, model="large").embeddings
+                
+                for (item_id, _), embedding in zip(items, embeddings):
+                    cursor.execute("""
+                        INSERT INTO item_embeddings (item_id, embedding) 
+                        VALUES (%s, %s)
+                        ON CONFLICT (item_id) DO UPDATE 
+                        SET embedding = EXCLUDED.embedding
+                    """, (item_id, embedding))
+                
+                conn.commit()
 
 generate_and_store_embeddings()
 
-    
+
 if __name__ == '__main__':
-    app.run(debug=False)
+    port = int(os.getenv('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
     
