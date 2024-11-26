@@ -237,15 +237,18 @@ def get_data_from_db(phone_number, page, per_page):
             conn.close()
 
 def generate_and_store_embeddings():
+    """Generate embeddings for all clothing items and store them in the database."""
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
+            # Enable vector extension
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
-            # Change dimension to 4096
+            conn.commit()
+
+            # Create embeddings table with explicit vector type
             cursor.execute("""
-                DROP TABLE IF EXISTS item_embeddings;
-                CREATE TABLE item_embeddings (
+                CREATE TABLE IF NOT EXISTS item_embeddings (
                     item_id INT PRIMARY KEY,
-                    embedding vector(4096)
+                    embedding vector(1024)
                 )
             """)
             conn.commit()
@@ -259,7 +262,7 @@ def generate_and_store_embeddings():
                     break
                 
                 descriptions = [item[1] for item in items]
-                embeddings = co.embed(texts=descriptions, model="large").embeddings
+                embeddings = co.embed(texts=descriptions, model="embed-english-light").embeddings
                 
                 for (item_id, _), embedding in zip(items, embeddings):
                     # Cast the array to vector type during insertion
