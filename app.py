@@ -301,7 +301,7 @@ def generate_and_store_embeddings():
     Generates embeddings for all clothing items and stores them 
     along with the item IDs in a new database table.
     """
-        try:
+    try:  # This try block should enclose the entire function
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
 
@@ -320,11 +320,6 @@ def generate_and_store_embeddings():
         else:
             app.logger.error("Failed to create the vector extension.")
             # ... (handle the error appropriately, e.g., raise an exception)
-    except Exception as e:
-        app.logger.error(f"Database error: {e}")
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
 
         # 1. Create a table to store embeddings (if it doesn't exist)
         cursor.execute("""
@@ -361,13 +356,13 @@ def generate_and_store_embeddings():
             """, (item_id, embedding)) 
         conn.commit()
 
-    except Exception as e:
+    except Exception as e:  # This except block should align with the try block
         app.logger.error(f"Database error: {e}")
     finally:
         if cursor:
             cursor.close()
         if conn:
-            conn.close()
+            conn.close()  
 
 generate_and_store_embeddings()
 
