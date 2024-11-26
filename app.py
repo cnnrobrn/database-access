@@ -22,7 +22,7 @@ from functools import wraps
 
 
 # Add these at the top of your file with other constants
-EMBED_MODEL = "embed-english-light-v3.0"
+EMBED_MODEL = "embed-english-v3.0"
 EMBED_DIMENSIONS = 1024
 
 # ===============================
