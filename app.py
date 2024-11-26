@@ -18,7 +18,24 @@ if not DATABASE_URL:
 co = cohere.Client('YOUR_COHERE_API_KEY')  # Initialize Cohere client
 # Call the function to generate and store embeddings
 
+@app.route('/rag_search', methods=['POST'])
+def rag_search():
+    try:
+        item_description = request.json["item_description"]
 
+        # 1. Generate embedding for the item description
+        query_embedding = co.embed(texts=[item_description], model="large").embeddings[0]
+
+        # 2. Perform similarity search in your vector database
+        # ... (This will depend on your vector database)
+        # ... (Assume this returns the ID of the most similar item)
+        most_similar_item_id = perform_similarity_search(query_embedding)
+
+        return jsonify({"item_id": most_similar_item_id})
+
+    except Exception as e:
+        app.logger.error(f"Error in RAG search: {e}")
+        return jsonify({"error": "Error in RAG search"}), 500
 
 @app.route('/api/links', methods=['GET'])
 def api_links():
