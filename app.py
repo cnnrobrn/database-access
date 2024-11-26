@@ -306,7 +306,7 @@ def generate_and_store_embeddings():
         cursor = conn.cursor()
 
         # 1. Create or replace the extension
-        cursor.execute("CREATE OR REPLACE EXTENSION vector;")
+        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
         conn.commit()
 
         # 2. Check if the extension is created
