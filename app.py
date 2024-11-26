@@ -237,17 +237,14 @@ def get_data_from_db(phone_number, page, per_page):
             conn.close()
 
 def generate_and_store_embeddings():
-    """
-    Generate embeddings for all clothing items using Cohere API and store them in the database.
-    Creates necessary database tables and processes items in batches.
-    """
+    """Generate embeddings for all clothing items and store them in the database."""
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
             # Enable vector extension
             cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
             conn.commit()
 
-            # Create embeddings table
+            # Create embeddings table with explicit vector type
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS item_embeddings (
                     item_id INT PRIMARY KEY,
@@ -268,15 +265,15 @@ def generate_and_store_embeddings():
                 embeddings = co.embed(texts=descriptions, model="large").embeddings
                 
                 for (item_id, _), embedding in zip(items, embeddings):
+                    # Cast the array to vector type during insertion
                     cursor.execute("""
                         INSERT INTO item_embeddings (item_id, embedding) 
-                        VALUES (%s, %s)
+                        VALUES (%s, %s::vector)
                         ON CONFLICT (item_id) DO UPDATE 
                         SET embedding = EXCLUDED.embedding
                     """, (item_id, embedding))
                 
                 conn.commit()
-
 # ===============================
 # Route Handlers
 # ===============================
@@ -284,11 +281,6 @@ def generate_and_store_embeddings():
 @app.route('/rag_search', methods=['POST'])
 @handle_errors
 def rag_search():
-    """
-    Perform similarity search using RAG (Retrieval-Augmented Generation).
-    Expects item_description in request JSON.
-    Returns most similar item_id based on embedding similarity.
-    """
     item_description = request.json.get("item_description")
     if not item_description:
         return jsonify({"error": "Item description is required"}), 400
@@ -297,8 +289,9 @@ def rag_search():
     
     with get_db_connection() as conn:
         with conn.cursor() as cursor:
+            # Cast the array to vector type
             cursor.execute("""
-                SELECT item_id, embedding <=> %s as distance
+                SELECT item_id, embedding <=> %s::vector as distance
                 FROM item_embeddings
                 ORDER BY distance ASC
                 LIMIT 1
