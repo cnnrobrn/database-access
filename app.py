@@ -23,19 +23,36 @@ def rag_search():
     try:
         item_description = request.json["item_description"]
 
-        # 1. Generate embedding for the item description
+        # Generate embedding for the query text
         query_embedding = co.embed(texts=[item_description], model="large").embeddings[0]
 
-        # 2. Perform similarity search in your vector database
-        # ... (This will depend on your vector database)
-        # ... (Assume this returns the ID of the most similar item)
-        most_similar_item_id = perform_similarity_search(query_embedding)
+        # Perform similarity search
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
 
-        return jsonify({"item_id": most_similar_item_id})
+        # Find most similar item using cosine similarity
+        cursor.execute("""
+            SELECT item_id, embedding <=> %s as distance
+            FROM item_embeddings
+            ORDER BY distance ASC
+            LIMIT 1
+        """, (query_embedding,))
+        
+        result = cursor.fetchone()
+        if result:
+            most_similar_item_id = result[0]
+            return jsonify({"item_id": most_similar_item_id})
+        else:
+            return jsonify({"error": "No matching items found"}), 404
 
     except Exception as e:
-        app.logger.error(f"Error in RAG search: {e}")
+        app.logger.error(f"Error in RAG search: {str(e)}")
         return jsonify({"error": "Error in RAG search"}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 @app.route('/api/links', methods=['GET'])
 def api_links():
@@ -301,68 +318,53 @@ def generate_and_store_embeddings():
     Generates embeddings for all clothing items and stores them 
     along with the item IDs in a new database table.
     """
-    try:  # This try block should enclose the entire function
+    try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
 
-        # 1. Create or replace the extension
-        cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        # First enable the vector extension - add this explicit command
+        cursor.execute("""
+            CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;
+        """)
         conn.commit()
 
-        # 2. Check if the extension is created
-        cursor.execute("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector');")
-        extension_exists = cursor.fetchone()[0]
-
-        if extension_exists:
-            app.logger.info("Vector extension is created successfully.")
-            # ... (rest of your code to create the table and generate embeddings)
-
-        else:
-            app.logger.error("Failed to create the vector extension.")
-            # ... (handle the error appropriately, e.g., raise an exception)
-
-        # 1. Create a table to store embeddings (if it doesn't exist)
+        # Create the embeddings table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS item_embeddings (
                 item_id INT PRIMARY KEY,
-                embedding VECTOR(1024)  -- Adjust dimensionality if needed
+                embedding vector(1024)
             )
         """)
         conn.commit()
 
-        # 2. Fetch all items with their descriptions and image features
+        # Fetch items (removed image_data since we're not using it)
         cursor.execute("""
-            SELECT i.id, i.description, o.image_data 
+            SELECT i.id, i.description
             FROM items i
-            JOIN outfits o ON i.outfit_id = o.id
         """)
         items = cursor.fetchall()
 
-        for item_id, description, image_data in items:
-            # 3. Combine text and image features (you'll need image processing here)
-            # For now, let's assume you have a function to extract image features:
-            image_features = extract_image_features(image_data)  
-            combined_text = f"{description} {image_features}" 
-
-            # 4. Generate embeddings using Cohere
-            embedding = co.embed(texts=[combined_text], model="large").embeddings[0]
-
-            # 5. Store the embedding in the database
+        for item_id, description in items:
+            # Generate embedding just from description text
+            embedding = co.embed(texts=[description], model="large").embeddings[0]
+            
             cursor.execute("""
                 INSERT INTO item_embeddings (item_id, embedding) 
                 VALUES (%s, %s)
                 ON CONFLICT (item_id) DO UPDATE 
                 SET embedding = EXCLUDED.embedding
-            """, (item_id, embedding)) 
+            """, (item_id, embedding))
+            
         conn.commit()
 
-    except Exception as e:  # This except block should align with the try block
-        app.logger.error(f"Database error: {e}")
+    except Exception as e:
+        app.logger.error(f"Database error: {str(e)}")
+        raise e  # Re-raise the exception to see the full error in logs
     finally:
         if cursor:
             cursor.close()
         if conn:
-            conn.close()  
+            conn.close()
 
 generate_and_store_embeddings()
 
