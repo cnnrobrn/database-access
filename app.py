@@ -334,10 +334,9 @@ def rag_search():
     if not item_description:
         return jsonify({"error": "Item description is required"}), 400
 
-    # Use the same model as in generate_and_store_embeddings
     query_embedding = co.embed(
         texts=[item_description], 
-        model=Embed_Model,
+        model=EMBED_MODEL,  # Fixed model name
         input_type="search_query"
     ).embeddings[0]
     
@@ -353,7 +352,8 @@ def rag_search():
             result = cursor.fetchone()
             if not result:
                 return jsonify({"error": "No matching items found"}), 404
-            return jsonify({"item_id": result[0]})
+            # Change the response format to match what Swift expects    
+            return jsonify({"item_id": result[0]})  # Return as item_id, not item_id
 
 @app.route('/api/links', methods=['GET'])
 @handle_errors
