@@ -337,7 +337,7 @@ def rag_search():
     # Use the same model as in generate_and_store_embeddings
     query_embedding = co.embed(
         texts=[item_description], 
-        model="embed-english-light-v3.0",
+        model=Embed_Model,
         input_type="search_query"
     ).embeddings[0]
     
@@ -353,7 +353,6 @@ def rag_search():
             result = cursor.fetchone()
             if not result:
                 return jsonify({"error": "No matching items found"}), 404
-            
             return jsonify({"item_id": result[0]})
 
 @app.route('/api/links', methods=['GET'])
