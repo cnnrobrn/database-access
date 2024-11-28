@@ -4,3 +4,5 @@ gunicorn
 python-dotenv
 flask-cors
 cohere
+flask_sqlalchemy
+sqlalchemy
