@@ -40,8 +40,7 @@ EMBED_DIMENSIONS = 1024
 app = Flask(__name__)
 CORS(app)
 
-# Initialize SQLAlchemy after creating the app
-db = SQLAlchemy(app)
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -51,6 +50,12 @@ COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
 # Update the database connection to use SQLAlchemy instead of raw psycopg2
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
+
+# Initialize SQLAlchemy after creating the app
+db = SQLAlchemy(app)
+
 
 
 
