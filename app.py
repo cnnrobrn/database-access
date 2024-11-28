@@ -19,6 +19,8 @@ from dotenv import load_dotenv
 import cohere
 import urllib.parse
 from functools import wraps
+import random
+import string
 
 
 # Add these at the top of your file with other constants
@@ -38,6 +40,31 @@ load_dotenv()
 # Configure environment variables
 DATABASE_URL = os.getenv('DATABASE_URL')
 COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
+
+class ReferralCode(db.Model):
+    __tablename__ = 'referral_codes'
+    id = db.Column(db.Integer, primary_key=True)
+    phone_id = db.Column(db.Integer, db.ForeignKey('phone_numbers.id'), nullable=False)
+    code = db.Column(db.String(10), unique=True, nullable=False)
+    used_count = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Referral(db.Model):
+    __tablename__ = 'referrals'
+    id = db.Column(db.Integer, primary_key=True)
+    referrer_id = db.Column(db.Integer, db.ForeignKey('phone_numbers.id'), nullable=False)
+    referred_id = db.Column(db.Integer, db.ForeignKey('phone_numbers.id'), nullable=False)
+    code_used = db.Column(db.String(10), db.ForeignKey('referral_codes.code'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+# Update PhoneNumber model
+class PhoneNumber(db.Model):
+    __tablename__ = 'phone_numbers'
+    id = db.Column(db.Integer, primary_key=True)
+    phone_number = db.Column(db.String(20), unique=True, nullable=False)
+    is_activated = db.Column(db.Boolean, default=False)
+    outfits = db.relationship('Outfit', backref='phone_number', lazy=True)
+    referral_codes = db.relationship('ReferralCode', backref='owner', lazy=True)
 
 # ===============================
 # Utility Functions
@@ -124,6 +151,13 @@ def clean_url(url):
 # ===============================
 # Database Operations
 # ===============================
+
+def generate_referral_code():
+    """Generate a unique 6-character referral code"""
+    while True:
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        if not ReferralCode.query.filter_by(code=code).first():
+            return code
 
 def get_items_from_db(outfit_id):
     """
@@ -326,6 +360,61 @@ def generate_and_store_embeddings():
 # ===============================
 # Route Handlers
 # ===============================
+
+@app.route("/api/referral/generate", methods=['POST'])
+def generate_code():
+    phone_number = request.json.get('phone_number')
+    if not phone_number:
+        return jsonify({"error": "Phone number required"}), 400
+        
+    user = PhoneNumber.query.filter_by(phone_number=phone_number).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+        
+    # Generate new referral code
+    code = generate_referral_code()
+    new_code = ReferralCode(phone_id=user.id, code=code)
+    db.session.add(new_code)
+    db.session.commit()
+    
+    return jsonify({"code": code})
+
+@app.route("/api/referral/validate", methods=['POST'])
+def validate_referral():
+    code = request.json.get('code')
+    new_user_phone = request.json.get('phone_number')
+    
+    if not code or not new_user_phone:
+        return jsonify({"error": "Code and phone number required"}), 400
+        
+    referral_code = ReferralCode.query.filter_by(code=code).first()
+    if not referral_code:
+        return jsonify({"error": "Invalid referral code"}), 404
+        
+    # Check if new user already exists
+    new_user = PhoneNumber.query.filter_by(phone_number=new_user_phone).first()
+    if new_user and new_user.is_activated:
+        return jsonify({"error": "User already activated"}), 400
+        
+    if not new_user:
+        new_user = PhoneNumber(phone_number=new_user_phone)
+        db.session.add(new_user)
+        
+    # Create referral record
+    referral = Referral(
+        referrer_id=referral_code.phone_id,
+        referred_id=new_user.id,
+        code_used=code
+    )
+    
+    # Update referral code usage
+    referral_code.used_count += 1
+    new_user.is_activated = True
+    
+    db.session.add(referral)
+    db.session.commit()
+    
+    return jsonify({"success": True})
 
 @app.route('/rag_search', methods=['POST'])
 @handle_errors
