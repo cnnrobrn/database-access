@@ -23,6 +23,9 @@ import random
 import string
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+from wha7_models import Base, init_db, PhoneNumber, Outfit, Item, Link
+from flask_sqlalchemy import SQLAlchemy
+
 
 
 
@@ -38,6 +41,7 @@ EMBED_DIMENSIONS = 1024
 # ===============================
 
 app = Flask(__name__)
+db = SQLAlchemy()
 CORS(app)
 
 
@@ -54,41 +58,13 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
 # Initialize SQLAlchemy after creating the app
-db = SQLAlchemy(app)
 
+engine, _ = init_db()
+for cls in Base._decl_class_registry.values():
+    if hasattr(cls, '__tablename__'):
+        cls.__table__.info['bind_key'] = None
 
-
-
-class ReferralCode(db.Model):
-    __tablename__ = 'referral_codes'
-    __table_args__ = {'extend_existing': True}
-    
-    id = db.Column(db.Integer, primary_key=True)
-    phone_id = db.Column(db.Integer, db.ForeignKey('phone_numbers.id'), nullable=False)
-    code = db.Column(db.String(10), unique=True, nullable=False)
-    used_count = db.Column(db.Integer, default=0)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-
-class Referral(db.Model):
-    __tablename__ = 'referrals'
-    __table_args__ = {'extend_existing': True}  # Add this line
-    
-    id = db.Column(db.Integer, primary_key=True)
-    referrer_id = db.Column(db.Integer, db.ForeignKey('phone_numbers.id'), nullable=False)
-    referred_id = db.Column(db.Integer, db.ForeignKey('phone_numbers.id'), nullable=False)
-    code_used = db.Column(db.String(10), db.ForeignKey('referral_codes.code'), nullable=False)
-    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-
-class PhoneNumber(db.Model):
-    __tablename__ = 'phone_numbers'
-    __table_args__ = {'extend_existing': True}  # Add this line
-    
-    id = db.Column(db.Integer, primary_key=True)
-    phone_number = db.Column(db.String(20), unique=True, nullable=False)
-    is_activated = db.Column(db.Boolean, default=False)
-    outfits = db.relationship('Outfit', backref='phone_number', lazy=True)
-    referral_codes = db.relationship('ReferralCode', backref='owner', lazy=True)
-
+db.init_app(app)
 # ===============================
 # Utility Functions
 # ===============================
