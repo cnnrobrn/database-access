@@ -24,8 +24,7 @@ import string
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 
-# Initialize SQLAlchemy after creating the app
-db = SQLAlchemy(app)
+
 
 
 
@@ -41,6 +40,8 @@ EMBED_DIMENSIONS = 1024
 app = Flask(__name__)
 CORS(app)
 
+# Initialize SQLAlchemy after creating the app
+db = SQLAlchemy(app)
 # Load environment variables from .env file
 load_dotenv()
 
