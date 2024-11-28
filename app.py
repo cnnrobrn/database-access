@@ -391,6 +391,29 @@ def generate_code():
     
     return jsonify({"code": code})
 
+@app.route('/api/user/check_activation', methods=['POST'])
+def check_activation():
+    phone_number = request.json.get('phone_number')
+    if not phone_number:
+        return jsonify({'error': 'Phone number required'}), 400
+        
+    phone_number = format_phone_number(phone_number)
+    user = PhoneNumber.query.filter_by(phone_number=phone_number).first()
+    
+    if not user:
+        # New user
+        return jsonify({
+            'is_activated': False,
+            'needs_referral': True,
+            'message': 'Please enter a referral code to activate your account'
+        })
+    
+    return jsonify({
+        'is_activated': user.is_activated,
+        'needs_referral': not user.is_activated,
+        'message': 'Please enter a referral code to activate your account' if not user.is_activated else None
+    })
+
 @app.route("/api/referral/validate", methods=['POST'])
 def validate_referral():
     code = request.json.get('code')
