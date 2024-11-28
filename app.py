@@ -21,6 +21,13 @@ import urllib.parse
 from functools import wraps
 import random
 import string
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+
+# Initialize SQLAlchemy after creating the app
+db = SQLAlchemy(app)
+
+
 
 
 # Add these at the top of your file with other constants
@@ -40,6 +47,11 @@ load_dotenv()
 # Configure environment variables
 DATABASE_URL = os.getenv('DATABASE_URL')
 COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
+# Update the database connection to use SQLAlchemy instead of raw psycopg2
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+
 
 class ReferralCode(db.Model):
     __tablename__ = 'referral_codes'
