@@ -373,8 +373,9 @@ def generate_and_store_embeddings():
 # Route Handlers
 # ===============================
 
-@app.route("/api/referral/generate", methods=['POST'])
-def generate_code():
+@app.route("/api/referral/check", methods=['POST'])
+def check_referral_code():
+    """Check if user already has a referral code"""
     phone_number = request.json.get('phone_number')
     if not phone_number:
         return jsonify({"error": "Phone number required"}), 400
@@ -383,8 +384,27 @@ def generate_code():
     if not user:
         return jsonify({"error": "User not found"}), 404
         
-    # Generate new referral code
-    code = generate_referral_code()
+    # Get most recent referral code
+    code = ReferralCode.query.filter_by(phone_id=user.id).order_by(ReferralCode.created_at.desc()).first()
+    
+    if code:
+        return jsonify({"code": code.code})
+    else:
+        return jsonify({"code": None})
+
+@app.route("/api/referral/generate", methods=['POST'])
+def generate_code():
+    """Generate a new referral code for user"""
+    phone_number = request.json.get('phone_number')
+    if not phone_number:
+        return jsonify({"error": "Phone number required"}), 400
+        
+    user = PhoneNumber.query.filter_by(phone_number=phone_number).first()
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+        
+    # Generate new code
+    code = generate_referral_code()  # Your existing function
     new_code = ReferralCode(phone_id=user.id, code=code)
     db.session.add(new_code)
     db.session.commit()
