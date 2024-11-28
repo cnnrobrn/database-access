@@ -61,7 +61,7 @@ db = SQLAlchemy(app)
 
 class ReferralCode(db.Model):
     __tablename__ = 'referral_codes'
-    __table_args__ = {'extend_existing': True}  # Add this line
+    __table_args__ = {'extend_existing': True}
     
     id = db.Column(db.Integer, primary_key=True)
     phone_id = db.Column(db.Integer, db.ForeignKey('phone_numbers.id'), nullable=False)
@@ -447,40 +447,70 @@ def check_activation():
 
 @app.route("/api/referral/validate", methods=['POST'])
 def validate_referral():
-    code = request.json.get('code')
-    new_user_phone = request.json.get('phone_number')
-    
-    if not code or not new_user_phone:
-        return jsonify({"error": "Code and phone number required"}), 400
+    try:
+        print("Received referral validation request")
+        data = request.get_json()
+        code = data.get('code')
+        new_user_phone = data.get('phone_number')
         
-    referral_code = ReferralCode.query.filter_by(code=code).first()
-    if not referral_code:
-        return jsonify({"error": "Invalid referral code"}), 404
+        print(f"Processing code: {code} for phone: {new_user_phone}")
         
-    # Check if new user already exists
-    new_user = PhoneNumber.query.filter_by(phone_number=new_user_phone).first()
-    if new_user and new_user.is_activated:
-        return jsonify({"error": "User already activated"}), 400
+        if not code or not new_user_phone:
+            return jsonify({
+                "error": "Code and phone number required",
+                "is_activated": False,
+                "needs_referral": True
+            }), 400
         
-    if not new_user:
-        new_user = PhoneNumber(phone_number=new_user_phone)
-        db.session.add(new_user)
+        referral_code = ReferralCode.query.filter_by(code=code).first()
+        if not referral_code:
+            return jsonify({
+                "error": "Invalid referral code",
+                "is_activated": False,
+                "needs_referral": True
+            }), 404
         
-    # Create referral record
-    referral = Referral(
-        referrer_id=referral_code.phone_id,
-        referred_id=new_user.id,
-        code_used=code
-    )
-    
-    # Update referral code usage
-    referral_code.used_count += 1
-    new_user.is_activated = True
-    
-    db.session.add(referral)
-    db.session.commit()
-    
-    return jsonify({"success": True})
+        new_user = PhoneNumber.query.filter_by(phone_number=new_user_phone).first()
+        
+        if new_user and new_user.is_activated:
+            return jsonify({
+                "is_activated": True,
+                "needs_referral": False,
+                "message": "User already activated"
+            })
+        
+        if not new_user:
+            new_user = PhoneNumber(phone_number=new_user_phone)
+            db.session.add(new_user)
+            db.session.commit()  # Commit to get the new user's ID
+            
+        referral = Referral(
+            referrer_id=referral_code.phone_id,
+            referred_id=new_user.id,
+            code_used=code
+        )
+        
+        referral_code.used_count += 1
+        new_user.is_activated = True
+        
+        db.session.add(referral)
+        db.session.commit()
+        
+        return jsonify({
+            "is_activated": True,
+            "needs_referral": False,
+            "message": "Account successfully activated"
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error in validate_referral: {str(e)}")
+        return jsonify({
+            "error": "Server error",
+            "is_activated": False,
+            "needs_referral": True,
+            "message": str(e)
+        }), 500
 
 @app.route('/rag_search', methods=['POST'])
 @handle_errors
