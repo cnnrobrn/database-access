@@ -41,7 +41,6 @@ EMBED_DIMENSIONS = 1024
 # ===============================
 
 app = Flask(__name__)
-db = SQLAlchemy()
 CORS(app)
 
 
@@ -52,19 +51,26 @@ load_dotenv()
 DATABASE_URL = os.getenv('DATABASE_URL')
 COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
 # Update the database connection to use SQLAlchemy instead of raw psycopg2
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure environment variables
+DATABASE_URL = os.getenv('DATABASE_URL')
+COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
+
+# Configure SQLAlchemy
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# Initialize SQLAlchemy
+db = SQLAlchemy(app)
 
+# Initialize database connection from wha7_models
+engine, session_factory = init_db()
 
-# Initialize SQLAlchemy after creating the app
-
-engine, _ = init_db()
-for cls in Base._decl_class_registry.values():
-    if hasattr(cls, '__tablename__'):
-        cls.__table__.info['bind_key'] = None
-
-db.init_app(app)
+# Create tables if they don't exist
+with app.app_context():
+    db.create_all()
 # ===============================
 # Utility Functions
 # ===============================
