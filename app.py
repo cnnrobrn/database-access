@@ -23,14 +23,7 @@ import random
 import string
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
-from wha7_models import Base, init_db, PhoneNumber, Outfit, Item, Link
-from flask_sqlalchemy import SQLAlchemy
-
-
-
-
-
-
+from wha7_models import Base, init_db, PhoneNumber, Outfit, Item, Link, ReferralCode, Referral
 
 # Add these at the top of your file with other constants
 EMBED_MODEL = "embed-english-v3.0"
@@ -43,14 +36,6 @@ EMBED_DIMENSIONS = 1024
 app = Flask(__name__)
 CORS(app)
 
-
-# Load environment variables from .env file
-load_dotenv()
-
-# Configure environment variables
-DATABASE_URL = os.getenv('DATABASE_URL')
-COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
-# Update the database connection to use SQLAlchemy instead of raw psycopg2
 # Load environment variables from .env file
 load_dotenv()
 
