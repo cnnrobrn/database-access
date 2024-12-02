@@ -136,6 +136,59 @@ def get_data_from_db_combined(phone_number=None, instagram_username=None, page=1
             cursor.close()
         if conn:
             conn.close()
+def link_instagram_to_phone(phone_number, instagram_username):
+    """
+    Link an Instagram username to an existing phone number.
+    Returns (success, message) tuple.
+    """
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        # Format phone number
+        phone_number = format_phone_number(phone_number)
+        # Remove @ symbol if present
+        instagram_username = instagram_username.lstrip('@')
+        
+        # First check if phone number exists
+        cursor.execute("""
+            SELECT id FROM phone_numbers 
+            WHERE phone_number = %s
+        """, (phone_number,))
+        
+        if not cursor.fetchone():
+            return False, "Phone number not found"
+            
+        # Then check if Instagram username is already taken by another user
+        cursor.execute("""
+            SELECT phone_number FROM phone_numbers 
+            WHERE instagram_username = %s AND phone_number != %s
+        """, (instagram_username, phone_number))
+        
+        existing = cursor.fetchone()
+        if existing:
+            return False, "Instagram username already linked to another account"
+        
+        # Update the record
+        cursor.execute("""
+            UPDATE phone_numbers 
+            SET instagram_username = %s 
+            WHERE phone_number = %s
+            RETURNING id
+        """, (instagram_username, phone_number))
+        
+        conn.commit()
+        return True, "Successfully linked Instagram username"
+        
+    except Exception as e:
+        conn.rollback()
+        app.logger.error(f"Database error: {e}")
+        return False, str(e)
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 def format_phone_number(phone_number):
     """
