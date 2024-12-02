@@ -118,7 +118,7 @@ def get_data_from_db_combined(phone_number=None, instagram_username=None, page=1
         offset = (page - 1) * per_page
         
         query = """
-            SELECT DISTINCT o.id, o.image_data, o.description 
+            SELECT DISTINCT o.id, o.image_data, o.description, pn.phone_number, pn.instagram_username 
             FROM outfits o 
             LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
             WHERE (pn.phone_number = %s OR pn.instagram_username = %s)
