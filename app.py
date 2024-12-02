@@ -125,7 +125,7 @@ def get_data_from_db_combined(phone_number=None, instagram_username=None, page=1
             ORDER BY o.id DESC
             LIMIT %s OFFSET %s
         """
-        
+        print(f"{query}")
         cursor.execute(query, (phone_number, instagram_username, per_page, offset))
         return cursor.fetchall()
         
