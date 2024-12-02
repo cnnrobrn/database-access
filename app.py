@@ -110,7 +110,7 @@ def get_data_from_db_combined(phone_number=None, instagram_username=None, page=1
     """
     Retrieve paginated outfit data for either a phone number or Instagram username or both.
     """
-    print(f"Phone Number: {phone_number} \n instagram username {instagram_username}"
+    print(f"Phone Number: {phone_number} \n instagram username {instagram_username}")
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
