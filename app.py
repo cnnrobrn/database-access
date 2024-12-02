@@ -106,6 +106,37 @@ def handle_errors(f):
             return jsonify({'error': 'An unexpected error occurred'}), 500
     return wrapper
 
+def get_data_from_db_combined(phone_number=None, instagram_username=None, page=1, per_page=10):
+    """
+    Retrieve paginated outfit data for either a phone number or Instagram username or both.
+    """
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        offset = (page - 1) * per_page
+        
+        query = """
+            SELECT DISTINCT o.id, o.image_data, o.description 
+            FROM outfits o 
+            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
+            WHERE (pn.phone_number = %s OR pn.instagram_username = %s)
+            ORDER BY o.id DESC
+            LIMIT %s OFFSET %s
+        """
+        
+        cursor.execute(query, (phone_number, instagram_username, per_page, offset))
+        return cursor.fetchall()
+        
+    except Exception as e:
+        app.logger.error(f"Database error: {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 def format_phone_number(phone_number):
     """
     Standardize phone number format to include +1 prefix and remove special characters.
@@ -347,6 +378,36 @@ def generate_and_store_embeddings():
     except Exception as e:
         app.logger.error(f"Failed to generate embeddings: {str(e)}")
         raise
+
+def get_data_from_db_by_instagram(instagram_username, page, per_page):
+    """
+    Retrieve paginated outfit data for a specific Instagram username.
+    """
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        offset = (page - 1) * per_page
+        
+        cursor.execute("""
+            SELECT o.id, o.image_data, o.description 
+            FROM outfits o 
+            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
+            WHERE pn.instagram_username = %s 
+            ORDER BY o.id DESC
+            LIMIT %s OFFSET %s
+        """, (instagram_username, per_page, offset))
+        
+        return cursor.fetchall()
+    except Exception as e:
+        app.logger.error(f"Database error: {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 # ===============================
 # Route Handlers
 # ===============================
@@ -607,24 +668,27 @@ def api_data_all():
 @handle_errors
 def api_data():
     """
-    Retrieve paginated list of outfits for a specific phone number.
-    Requires phone_number query parameter.
-    Supports page and per_page query parameters for pagination.
+    Retrieve paginated list of outfits for a phone number and/or Instagram username.
     """
     phone_number = request.args.get('phone_number')
+    instagram_username = request.args.get('instagram_username')
     page = request.args.get('page', default=1, type=int)
     per_page = request.args.get('per_page', default=10, type=int)
     
-    if not phone_number:
-        return jsonify({'error': 'Phone number is required'}), 400
+    if not phone_number and not instagram_username:
+        return jsonify({'error': 'Either phone number or Instagram username is required'}), 400
         
-    formatted_phone = format_phone_number(phone_number)
-    data = get_data_from_db(formatted_phone, page, per_page)
+    if phone_number:
+        phone_number = format_phone_number(phone_number)
+    if instagram_username:
+        instagram_username = instagram_username.lstrip('@')
+    
+    data = get_data_from_db_combined(phone_number, instagram_username, page, per_page)
     
     if data is None:
         return jsonify({'error': 'Database error'}), 500
     if len(data) == 0:
-        return jsonify({'error': f'No outfits found for phone number: {formatted_phone}'}), 404
+        return jsonify({'error': 'No outfits found'}), 404
         
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
                  for outfit_id, image_data, description in data]
@@ -661,9 +725,179 @@ def init_route():
     initialize_app()
     return jsonify({"status": "initialization complete"})
 
+
+# Add new database function for Instagram username queries
+# Add new route for Instagram username queries
+@app.route('/api/data/instagram', methods=['GET'])
+@handle_errors
+def api_data_instagram():
+    """
+    Retrieve paginated list of outfits for a specific Instagram username.
+    Requires instagram_username query parameter.
+    Supports page and per_page query parameters for pagination.
+    """
+    instagram_username = request.args.get('instagram_username')
+    page = request.args.get('page', default=1, type=int)
+    per_page = request.args.get('per_page', default=10, type=int)
+    
+    if not instagram_username:
+        return jsonify({'error': 'Instagram username is required'}), 400
+        
+    # Remove @ symbol if present
+    instagram_username = instagram_username.lstrip('@')
+    
+    data = get_data_from_db_by_instagram(instagram_username, page, per_page)
+    
+    if data is None:
+        return jsonify({'error': 'Database error'}), 500
+    if len(data) == 0:
+        return jsonify({'error': f'No outfits found for Instagram username: {instagram_username}'}), 404
+        
+    data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
+                 for outfit_id, image_data, description in data]
+    
+    return jsonify({
+        'outfits': data_list,
+        'has_more': len(data_list) == per_page
+    })
+
 # ===============================
 # Main Entry Point
 # ===============================
+
+
+# Add these functions after the other database operations
+
+def check_instagram_username(instagram_username):
+    """
+    Check if an Instagram username already exists in the database.
+    Returns the associated phone number if found, None otherwise.
+    """
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT phone_number 
+            FROM phone_numbers 
+            WHERE instagram_username = %s
+        """, (instagram_username,))
+        
+        result = cursor.fetchone()
+        return result[0] if result else None
+        
+    except Exception as e:
+        app.logger.error(f"Database error: {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# Add this after the other Instagram-related functions
+
+def unlink_instagram(phone_number):
+    """
+    Remove Instagram username association from a phone number.
+    Returns (success, message) tuple.
+    """
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cursor = conn.cursor()
+        
+        # Format phone number
+        phone_number = format_phone_number(phone_number)
+        
+        # Check if phone number exists
+        cursor.execute("""
+            SELECT id FROM phone_numbers 
+            WHERE phone_number = %s
+        """, (phone_number,))
+        
+        if not cursor.fetchone():
+            return False, "Phone number not found"
+        
+        # Remove Instagram username
+        cursor.execute("""
+            UPDATE phone_numbers 
+            SET instagram_username = NULL 
+            WHERE phone_number = %s
+            RETURNING id
+        """, (phone_number,))
+        
+        conn.commit()
+        return True, "Successfully unlinked Instagram username"
+        
+    except Exception as e:
+        conn.rollback()
+        app.logger.error(f"Database error: {e}")
+        return False, str(e)
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+# Modify the existing link_instagram route to match Swift app expectations
+@app.route('/api/instagram/link', methods=['POST'])
+@handle_errors
+def link_instagram():
+    """
+    Link an Instagram username to an existing phone number.
+    """
+    data = request.get_json()
+    phone_number = data.get('phone_number')
+    instagram_username = data.get('instagram_username')
+    
+    if not phone_number or not instagram_username:
+        return jsonify({'error': 'Both phone number and Instagram username are required'}), 400
+    
+    success, message = link_instagram_to_phone(phone_number, instagram_username)
+    
+    if success:
+        return jsonify({'username': instagram_username}), 200
+    else:
+        return jsonify({'error': message}), 400
+
+# Add new unlink endpoint
+@app.route('/api/instagram/unlink', methods=['POST'])
+@handle_errors
+def unlink_instagram_route():
+    """
+    Remove Instagram username association from a phone number.
+    """
+    data = request.get_json()
+    phone_number = data.get('phone_number')
+    
+    if not phone_number:
+        return jsonify({'error': 'Phone number is required'}), 400
+    
+    success, message = unlink_instagram(phone_number)
+    
+    if success:
+        return jsonify({'message': message}), 200
+    else:
+        return jsonify({'error': message}), 400
+# Add new routes
+@app.route('/api/instagram/check', methods=['GET'])
+@handle_errors
+def check_instagram():
+    """
+    Check if an Instagram username is already in use.
+    """
+    instagram_username = request.args.get('instagram_username')
+    if not instagram_username:
+        return jsonify({'error': 'Instagram username is required'}), 400
+        
+    instagram_username = instagram_username.lstrip('@')
+    existing_phone = check_instagram_username(instagram_username)
+    
+    return jsonify({
+        'is_taken': existing_phone is not None,
+        'phone_number': existing_phone if existing_phone else None
+    })
+
 
 
 if __name__ == '__main__':
