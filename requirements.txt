@@ -1,11 +1,8 @@
-flask
+fastapi
 psycopg2
-gunicorn
+uvicorn[standard]  # Replaces gunicorn
 python-dotenv
-flask-cors
 cohere
-flask_sqlalchemy
 sqlalchemy
-git+https://${GITHUB_TOKEN}@github.com/cnnrobrn/wha7-models.git@main
-asyncpg  # If using async database operations
-httpx    # If making async HTTP requests
+asyncpg          # If using async database operations
+httpx            # If making async HTTP requests
