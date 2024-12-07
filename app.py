@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from fastapi import Depends
 
 # Add these at the top of your file with other constants
 EMBED_MODEL = "embed-english-v3.0"
