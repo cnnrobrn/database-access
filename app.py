@@ -1,18 +1,6 @@
-"""
-Flask Application for Product Search and Management
-------------------------------------------------
-This application provides a REST API for searching products, managing outfits,
-and handling product links using vector embeddings for similarity search.
-
-Main Features:
-- RAG (Retrieval-Augmented Generation) search using Cohere embeddings
-- Product and outfit management
-- Link tracking and organization
-- Phone number-based user management
-"""
-
-from flask import Flask, jsonify, request
-from flask_cors import CORS
+from fastapi import FastAPI, Request, HTTPException, Query
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 import psycopg2
 import os
 from dotenv import load_dotenv
@@ -21,9 +9,11 @@ import urllib.parse
 from functools import wraps
 import random
 import string
-from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
 from datetime import datetime
-from wha7_models import Base, init_db, PhoneNumber, Outfit, Item, Link, ReferralCode, Referral
 
 # Add these at the top of your file with other constants
 EMBED_MODEL = "embed-english-v3.0"
@@ -33,8 +23,16 @@ EMBED_DIMENSIONS = 1024
 # Application Initialization
 # ===============================
 
-app = Flask(__name__)
-CORS(app)
+app = FastAPI()
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -43,19 +41,82 @@ load_dotenv()
 DATABASE_URL = os.getenv('DATABASE_URL')
 COHERE_API_KEY = os.getenv('YOUR_COHERE_API_KEY')
 
-# Configure SQLAlchemy
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Initialize Cohere client
+try:
+    co = cohere.Client(COHERE_API_KEY)
+except Exception as e:
+    print(f"Cohere client initialization error: {str(e)}")
+    raise
 
-# Initialize SQLAlchemy
-db = SQLAlchemy(app)
+# SQLAlchemy setup
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-# Initialize database connection from wha7_models
-engine, session_factory = init_db()
+# Define your database models here (same as your wha7_models.py)
+class PhoneNumber(Base):
+    __tablename__ = "phone_numbers"
+    id = Column(Integer, primary_key=True, index=True)
+    phone_number = Column(String, unique=True, index=True)
+    instagram_username = Column(String, unique=True, index=True, nullable=True)
+    is_activated = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    outfits = relationship("Outfit", back_populates="phone")
+    referral_codes = relationship("ReferralCode", back_populates="phone")
+
+class Outfit(Base):
+    __tablename__ = "outfits"
+    id = Column(Integer, primary_key=True, index=True)
+    phone_id = Column(Integer, ForeignKey("phone_numbers.id"))
+    image_data = Column(String)
+    description = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    phone = relationship("PhoneNumber", back_populates="outfits")
+    items = relationship("Item", back_populates="outfit")
+
+class Item(Base):
+    __tablename__ = "items"
+    id = Column(Integer, primary_key=True, index=True)
+    outfit_id = Column(Integer, ForeignKey("outfits.id"))
+    description = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    outfit = relationship("Outfit", back_populates="items")
+    links = relationship("Link", back_populates="item")
+
+class Link(Base):
+    __tablename__ = "links"
+    id = Column(Integer, primary_key=True, index=True)
+    item_id = Column(Integer, ForeignKey("items.id"))
+    photo_url = Column(String, nullable=True)
+    url = Column(String)
+    price = Column(String, nullable=True)
+    title = Column(String, nullable=True)
+    rating = Column(String, nullable=True)
+    reviews_count = Column(String, nullable=True)
+    merchant_name = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    item = relationship("Item", back_populates="links")
+
+class ReferralCode(Base):
+    __tablename__ = "referral_codes"
+    id = Column(Integer, primary_key=True, index=True)
+    phone_id = Column(Integer, ForeignKey("phone_numbers.id"))
+    code = Column(String, unique=True, index=True)
+    used_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    phone = relationship("PhoneNumber", back_populates="referral_codes")
+
+class Referral(Base):
+    __tablename__ = "referrals"
+    id = Column(Integer, primary_key=True, index=True)
+    referrer_id = Column(Integer, ForeignKey("phone_numbers.id"))
+    referred_id = Column(Integer, ForeignKey("phone_numbers.id"))
+    code_used = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables if they don't exist
-with app.app_context():
-    db.create_all()
+Base.metadata.create_all(bind=engine)
+
 # ===============================
 # Utility Functions
 # ===============================
@@ -77,119 +138,82 @@ def validate_environment():
             "Please set these in your .env file or deployment environment."
         )
 
-def get_db_connection():
+def get_db():
     """
-    Create and return a new database connection.
-    Raises exception if connection fails.
+    Dependency function to yield a database session
     """
+    db = SessionLocal()
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
-    except Exception as e:
-        app.logger.error(f"Database connection error: {str(e)}")
-        raise
+        yield db
+    finally:
+        db.close()
 
-def handle_errors(f):
+async def handle_errors(f):
     """
     Decorator to standardize error handling across routes.
     Catches and logs errors, returns appropriate HTTP responses.
     """
     @wraps(f)
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         try:
-            return f(*args, **kwargs)
+            return await f(*args, **kwargs)
         except psycopg2.Error as e:
-            app.logger.error(f"Database error: {str(e)}")
-            return jsonify({'error': 'Database error occurred'}), 500
+            print(f"Database error: {str(e)}")
+            return JSONResponse({'error': 'Database error occurred'}, status_code=500)
         except Exception as e:
-            app.logger.error(f"Unexpected error: {str(e)}")
-            return jsonify({'error': 'An unexpected error occurred'}), 500
+            print(f"Unexpected error: {str(e)}")
+            return JSONResponse({'error': 'An unexpected error occurred'}, status_code=500)
     return wrapper
 
-def get_data_from_db_combined(phone_number=None, instagram_username=None, page=1, per_page=10):
+def get_data_from_db_combined(db: SessionLocal, phone_number: str = None, instagram_username: str = None, page: int = 1, per_page: int = 10):
     """
     Retrieve paginated outfit data for either a phone number or Instagram username or both.
     """
     print(f"Phone Number: {phone_number} \n instagram username {instagram_username}")
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        offset = (page - 1) * per_page
-        
-        query = """
-            SELECT DISTINCT o.id, o.image_data, o.description 
-            FROM outfits o 
-            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
-            WHERE (pn.phone_number = %s OR pn.instagram_username = %s)
-            ORDER BY o.id DESC
-            LIMIT %s OFFSET %s
-        """
-        cursor.execute(query, (phone_number, instagram_username, per_page, offset))
-        return cursor.fetchall()
+        query = db.query(Outfit.id, Outfit.image_data, Outfit.description).join(PhoneNumber)
+        if phone_number:
+            query = query.filter(PhoneNumber.phone_number == phone_number)
+        if instagram_username:
+            query = query.filter(PhoneNumber.instagram_username == instagram_username)
+        outfits = query.order_by(Outfit.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        return outfits
     except Exception as e:
-        app.logger.error(f"Database error: {e}")
+        print(f"Database error: {e}")
         return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-def link_instagram_to_phone(phone_number, instagram_username):
+
+def link_instagram_to_phone(db: SessionLocal, phone_number: str, instagram_username: str):
     """
     Link an Instagram username to an existing phone number.
     Returns (success, message) tuple.
     """
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
         # Format phone number
         phone_number = format_phone_number(phone_number)
         # Remove @ symbol if present
         instagram_username = instagram_username.lstrip('@')
         
         # First check if phone number exists
-        cursor.execute("""
-            SELECT id FROM phone_numbers 
-            WHERE phone_number = %s
-        """, (phone_number,))
-        
-        if not cursor.fetchone():
+        user = db.query(PhoneNumber).filter(PhoneNumber.phone_number == phone_number).first()
+        if not user:
             return False, "Phone number not found"
             
         # Then check if Instagram username is already taken by another user
-        cursor.execute("""
-            SELECT phone_number FROM phone_numbers 
-            WHERE instagram_username = %s AND phone_number != %s
-        """, (instagram_username, phone_number))
-        
-        existing = cursor.fetchone()
+        existing = db.query(PhoneNumber).filter(PhoneNumber.instagram_username == instagram_username, PhoneNumber.phone_number != phone_number).first()
         if existing:
             return False, "Instagram username already linked to another account"
         
         # Update the record
-        cursor.execute("""
-            UPDATE phone_numbers 
-            SET instagram_username = %s 
-            WHERE phone_number = %s
-            RETURNING id
-        """, (instagram_username, phone_number))
-        
-        conn.commit()
+        user.instagram_username = instagram_username
+        db.commit()
         return True, "Successfully linked Instagram username"
         
     except Exception as e:
-        conn.rollback()
-        app.logger.error(f"Database error: {e}")
+        db.rollback()
+        print(f"Database error: {e}")
         return False, str(e)
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
-def format_phone_number(phone_number):
+def format_phone_number(phone_number: str):
     """
     Standardize phone number format to include +1 prefix and remove special characters.
     """
@@ -198,7 +222,7 @@ def format_phone_number(phone_number):
         phone_number = "+1" + phone_number
     return phone_number
 
-def clean_url(url):
+def clean_url(url: str):
     """
     Clean and standardize URLs:
     - Remove Google redirect prefixes
@@ -225,344 +249,264 @@ def clean_url(url):
 # Database Operations
 # ===============================
 
-def generate_referral_code():
+def generate_referral_code(db: SessionLocal):
     """Generate a unique 6-character referral code"""
     while True:
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        if not ReferralCode.query.filter_by(code=code).first():
+        if not db.query(ReferralCode).filter(ReferralCode.code == code).first():
             return code
 
-def get_items_from_db(outfit_id):
+def get_items_from_db(db: SessionLocal, outfit_id: int):
     """
     Retrieve all items and their associated links for a given outfit ID.
     Returns a list of items with their links, sorted by rating and review count.
     """
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
         # Get items
-        cursor.execute("""
-            SELECT DISTINCT id, outfit_id, description
-            FROM items 
-            WHERE outfit_id = %s
-        """, (outfit_id,))
-        items = cursor.fetchall()
+        items = db.query(Item).filter(Item.outfit_id == outfit_id).all()
         items_with_links = []
         
         # Get links for each item
-        for item_id, outfit_id, description in items:
-            cursor.execute("""
-                SELECT id, photo_url, url, price, title, rating, reviews_count, merchant_name
-                FROM links 
-                WHERE item_id = %s
-                ORDER BY 
-                    CASE 
-                        WHEN rating IS NULL THEN 2
-                        ELSE 1
-                    END,
-                    rating DESC,
-                    reviews_count DESC
-            """, (item_id,))
-            links = cursor.fetchall()
+        for item in items:
+            links = db.query(Link).filter(Link.item_id == item.id).order_by(
+                Link.rating.desc(),
+                Link.reviews_count.desc()
+            ).all()
             
             formatted_links = [{
-                'id': link[0],
-                'photo_url': link[1],
-                'url': link[2],
-                'price': link[3],
-                'title': link[4],
-                'rating': link[5],
-                'reviews_count': link[6],
-                'merchant_name': link[7]
+                'id': link.id,
+                'photo_url': link.photo_url,
+                'url': link.url,
+                'price': link.price,
+                'title': link.title,
+                'rating': link.rating,
+                'reviews_count': link.reviews_count,
+                'merchant_name': link.merchant_name
             } for link in links]
             
             items_with_links.append({
-                'item_id': item_id,
-                'outfit_id': outfit_id,
-                'description': description,
+                'item_id': item.id,
+                'outfit_id': item.outfit_id,
+                'description': item.description,
                 'links': formatted_links
             })
         return items_with_links
     except Exception as e:
-        app.logger.error(f"Database error: {e}")
+        print(f"Database error: {e}")
         return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
-def get_all_data_from_db(page, per_page):
+def get_all_data_from_db(db: SessionLocal, page: int, per_page: int):
     """
     Retrieve paginated outfit data from the database.
     """
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        offset = (page - 1) * per_page
-        
-        cursor.execute("""
-            SELECT DISTINCT o.id, o.image_data, o.description 
-            FROM outfits o 
-            ORDER BY o.id DESC
-            LIMIT %s OFFSET %s
-        """, (per_page, offset))
-        
-        return cursor.fetchall()
+        outfits = db.query(Outfit.id, Outfit.image_data, Outfit.description).order_by(Outfit.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        return outfits
     except Exception as e:
-        app.logger.error(f"Database error: {e}")
+        print(f"Database error: {e}")
         return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
-def get_data_from_db(phone_number, page, per_page):
+def get_data_from_db(db: SessionLocal, phone_number: str, page: int, per_page: int):
     """
     Retrieve paginated outfit data for a specific phone number.
     """
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        offset = (page - 1) * per_page
-        
-        cursor.execute("""
-            SELECT o.id, o.image_data, o.description 
-            FROM outfits o 
-            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
-            WHERE pn.phone_number = %s 
-            ORDER BY o.id DESC
-            LIMIT %s OFFSET %s
-        """, (phone_number, per_page, offset))
-        
-        return cursor.fetchall()
+        outfits = db.query(Outfit.id, Outfit.image_data, Outfit.description).join(PhoneNumber).filter(PhoneNumber.phone_number == phone_number).order_by(Outfit.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        return outfits
     except Exception as e:
-        app.logger.error(f"Database error: {e}")
+        print(f"Database error: {e}")
         return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
-def generate_and_store_embeddings():
+def generate_and_store_embeddings(db: SessionLocal):
     """Generate embeddings for all clothing items and store them in the database."""
     try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cursor:
-                # Enable vector extension
-                cursor.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
-                conn.commit()
+        # Enable vector extension
+        db.execute("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public;")
+        db.commit()
 
-                # Drop existing table if it exists with wrong dimensions
-                cursor.execute("DROP TABLE IF EXISTS item_embeddings;")
-                
-                # Create embeddings table with correct dimensions (1024 for embed-english-v3.0)
-                cursor.execute(f"""
-                    CREATE TABLE IF NOT EXISTS item_embeddings (
-                        item_id INT PRIMARY KEY,
-                        embedding vector({EMBED_DIMENSIONS})
-                    )
-                """)
-                conn.commit()
+        # Drop existing table if it exists with wrong dimensions
+        db.execute("DROP TABLE IF EXISTS item_embeddings;")
+        
+        # Create embeddings table with correct dimensions (1024 for embed-english-v3.0)
+        db.execute(f"""
+            CREATE TABLE IF NOT EXISTS item_embeddings (
+                item_id INT PRIMARY KEY,
+                embedding vector({EMBED_DIMENSIONS})
+            )
+        """)
+        db.commit()
 
-                # First check if there are any items to process
-                cursor.execute("SELECT COUNT(*) FROM items")
-                count = cursor.fetchone()[0]
-                
-                if count == 0:
-                    app.logger.warning("No items found in the database to generate embeddings for")
-                    return
+        # First check if there are any items to process
+        count = db.query(Item).count()
+        
+        if count == 0:
+            print("No items found in the database to generate embeddings for")
+            return
 
-                # Process items in batches
-                batch_size = 100
-                offset = 0
+        # Process items in batches
+        batch_size = 100
+        offset = 0
+        
+        while True:
+            items = db.query(Item.id, Item.description).filter(Item.id.notin_(db.query(Item.id).filter(Item.id == Item.id))).order_by(Item.id).offset(offset).limit(batch_size).all()
+            
+            if not items:
+                break
+            
+            print(f"Processing batch of {len(items)} items")
+            
+            descriptions = [item[1] for item in items if item[1]]  # Filter out None descriptions
+            if not descriptions:
+                offset += batch_size
+                continue
+            
+            try:
+                embeddings = co.embed(
+                    texts=descriptions,
+                    model=EMBED_MODEL,
+                    input_type="search_query"
+                ).embeddings
                 
-                while True:
-                    cursor.execute("""
-                        SELECT id, description 
-                        FROM items 
-                        WHERE id NOT IN (SELECT item_id FROM item_embeddings)
-                        ORDER BY id 
-                        LIMIT %s OFFSET %s
-                    """, (batch_size, offset))
-                    
-                    items = cursor.fetchall()
-                    if not items:
-                        break
-                    
-                    app.logger.info(f"Processing batch of {len(items)} items")
-                    
-                    descriptions = [item[1] for item in items if item[1]]  # Filter out None descriptions
-                    if not descriptions:
-                        offset += batch_size
-                        continue
-                    
-                    try:
-                        embeddings = co.embed(
-                            texts=descriptions,
-                            model=EMBED_MODEL,
-                            input_type="search_query"
-                        ).embeddings
-                        
-                        # Insert embeddings in batches
-                        for (item_id, _), embedding in zip(items, embeddings):
-                            if embedding is not None:
-                                cursor.execute("""
-                                    INSERT INTO item_embeddings (item_id, embedding) 
-                                    VALUES (%s, %s::vector)
-                                    ON CONFLICT (item_id) DO UPDATE 
-                                    SET embedding = EXCLUDED.embedding
-                                """, (item_id, embedding))
-                        
-                        conn.commit()
-                        app.logger.info(f"Successfully processed batch starting at offset {offset}")
-                        
-                    except Exception as e:
-                        app.logger.error(f"Error processing batch at offset {offset}: {str(e)}")
-                        conn.rollback()
-                    
-                    offset += batch_size
+                # Insert embeddings in batches
+                for (item_id, _), embedding in zip(items, embeddings):
+                    if embedding is not None:
+                        db.execute("""
+                            INSERT INTO item_embeddings (item_id, embedding) 
+                            VALUES (:item_id, :embedding::vector)
+                            ON CONFLICT (item_id) DO UPDATE 
+                            SET embedding = EXCLUDED.embedding
+                        """, {"item_id": item_id, "embedding": embedding})
+                
+                db.commit()
+                print(f"Successfully processed batch starting at offset {offset}")
+                
+            except Exception as e:
+                print(f"Error processing batch at offset {offset}: {str(e)}")
+                db.rollback()
+            
+            offset += batch_size
 
     except Exception as e:
-        app.logger.error(f"Failed to generate embeddings: {str(e)}")
+        print(f"Failed to generate embeddings: {str(e)}")
         raise
 
-def get_data_from_db_by_instagram(instagram_username, page, per_page):
+def get_data_from_db_by_instagram(db: SessionLocal, instagram_username: str, page: int, per_page: int):
     """
     Retrieve paginated outfit data for a specific Instagram username.
     """
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        offset = (page - 1) * per_page
-        
-        cursor.execute("""
-            SELECT o.id, o.image_data, o.description 
-            FROM outfits o 
-            LEFT JOIN phone_numbers pn ON o.phone_id = pn.id 
-            WHERE pn.instagram_username = %s 
-            ORDER BY o.id DESC
-            LIMIT %s OFFSET %s
-        """, (instagram_username, per_page, offset))
-        
-        return cursor.fetchall()
+        outfits = db.query(Outfit.id, Outfit.image_data, Outfit.description).join(PhoneNumber).filter(PhoneNumber.instagram_username == instagram_username).order_by(Outfit.id.desc()).offset((page - 1) * per_page).limit(per_page).all()
+        return outfits
     except Exception as e:
-        app.logger.error(f"Database error: {e}")
+        print(f"Database error: {e}")
         return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 # ===============================
 # Route Handlers
 # ===============================
 
-@app.route("/api/referral/check", methods=['POST'])
-def check_referral_code():
+@app.post("/api/referral/check")
+async def check_referral_code(request: Request, db: SessionLocal = Depends(get_db)):
     """Check if user already has a referral code"""
-    phone_number = request.json.get('phone_number')
+    data = await request.json()
+    phone_number = data.get('phone_number')
     if not phone_number:
-        return jsonify({"error": "Phone number required"}), 400
+        raise HTTPException(status_code=400, detail="Phone number required")
         
-    user = PhoneNumber.query.filter_by(phone_number=phone_number).first()
+    user = db.query(PhoneNumber).filter(PhoneNumber.phone_number == phone_number).first()
     if not user:
-        return jsonify({"error": "User not found"}), 404
+        raise HTTPException(status_code=404, detail="User not found")
         
     # Get most recent referral code
-    code = ReferralCode.query.filter_by(phone_id=user.id).order_by(ReferralCode.created_at.desc()).first()
+    code = db.query(ReferralCode).filter(ReferralCode.phone_id == user.id).order_by(ReferralCode.created_at.desc()).first()
     
     if code:
-        return jsonify({"code": code.code})
+        return {"code": code.code}
     else:
-        return jsonify({"code": None})
+        return {"code":       None}
 
-@app.route("/api/referral/generate", methods=['POST'])
-def generate_code():
+@app.post("/api/referral/generate")
+async def generate_code(request: Request, db: SessionLocal = Depends(get_db)):
     """Generate a new referral code for user"""
-    phone_number = request.json.get('phone_number')
+    data = await request.json()
+    phone_number = data.get('phone_number')
     if not phone_number:
-        return jsonify({"error": "Phone number required"}), 400
+        raise HTTPException(status_code=400, detail="Phone number required")
         
-    user = PhoneNumber.query.filter_by(phone_number=phone_number).first()
+    user = db.query(PhoneNumber).filter(PhoneNumber.phone_number == phone_number).first()
     if not user:
-        return jsonify({"error": "User not found"}), 404
+        raise HTTPException(status_code=404, detail="User not found")
         
     # Generate new code
-    code = generate_referral_code()  # Your existing function
+    code = generate_referral_code(db)  # Your existing function
     new_code = ReferralCode(phone_id=user.id, code=code)
-    db.session.add(new_code)
-    db.session.commit()
+    db.add(new_code)
+    db.commit()
     
-    return jsonify({"code": code})
+    return {"code": code}
 
-@app.route('/api/user/check_activation', methods=['POST'])
-def check_activation():
-    phone_number = request.json.get('phone_number')
+@app.post('/api/user/check_activation')
+async def check_activation(request: Request, db: SessionLocal = Depends(get_db)):
+    data = await request.json()
+    phone_number = data.get('phone_number')
     if not phone_number:
-        return jsonify({'error': 'Phone number required'}), 400
+        raise HTTPException(status_code=400, detail='Phone number required')
         
     phone_number = format_phone_number(phone_number)
-    user = PhoneNumber.query.filter_by(phone_number=phone_number).first()
+    user = db.query(PhoneNumber).filter(PhoneNumber.phone_number == phone_number).first()
     
     if not user:
         # New user
-        return jsonify({
+        return {
             'is_activated': False,
             'needs_referral': True,
             'message': 'Please enter a referral code to activate your account'
-        })
+        }
     
-    return jsonify({
+    return {
         'is_activated': user.is_activated,
         'needs_referral': not user.is_activated,
         'message': 'Please enter a referral code to activate your account' if not user.is_activated else None
-    })
+    }
 
-@app.route("/api/referral/validate", methods=['POST'])
-def validate_referral():
+@app.post("/api/referral/validate")
+async def validate_referral(request: Request, db: SessionLocal = Depends(get_db)):
     try:
         print("Received referral validation request")
-        data = request.get_json()
+        data = await request.json()
         code = data.get('code')
         new_user_phone = data.get('phone_number')
         
         print(f"Processing code: {code} for phone: {new_user_phone}")
         
         if not code or not new_user_phone:
-            return jsonify({
+            return JSONResponse({
                 "error": "Code and phone number required",
                 "is_activated": False,
                 "needs_referral": True
-            }), 400
+            }, status_code=400)
         
-        referral_code = ReferralCode.query.filter_by(code=code).first()
+        referral_code = db.query(ReferralCode).filter(ReferralCode.code == code).first()
         if not referral_code:
-            return jsonify({
+            return JSONResponse({
                 "error": "Invalid referral code",
                 "is_activated": False,
                 "needs_referral": True
-            }), 404
+            }, status_code=404)
         
-        new_user = PhoneNumber.query.filter_by(phone_number=new_user_phone).first()
+        new_user = db.query(PhoneNumber).filter(PhoneNumber.phone_number == new_user_phone).first()
         
         if new_user and new_user.is_activated:
-            return jsonify({
+            return {
                 "is_activated": True,
                 "needs_referral": False,
                 "message": "User already activated"
-            })
+            }
         
         if not new_user:
             new_user = PhoneNumber(phone_number=new_user_phone)
-            db.session.add(new_user)
-            db.session.commit()  # Commit to get the new user's ID
+            db.add(new_user)
+            db.commit()  # Commit to get the new user's ID
             
         referral = Referral(
             referrer_id=referral_code.phone_id,
@@ -573,31 +517,32 @@ def validate_referral():
         referral_code.used_count += 1
         new_user.is_activated = True
         
-        db.session.add(referral)
-        db.session.commit()
+        db.add(referral)
+        db.commit()
         
-        return jsonify({
+        return {
             "is_activated": True,
             "needs_referral": False,
             "message": "Account successfully activated"
-        })
+        }
         
     except Exception as e:
-        db.session.rollback()
+        db.rollback()
         print(f"Error in validate_referral: {str(e)}")
-        return jsonify({
+        return JSONResponse({
             "error": "Server error",
             "is_activated": False,
             "needs_referral": True,
             "message": str(e)
-        }), 500
+        }, status_code=500)
 
-@app.route('/rag_search', methods=['POST'])
+@app.post('/rag_search')
 @handle_errors
-def rag_search():
-    item_description = request.json.get("item_description")
+async def rag_search(request: Request, db: SessionLocal = Depends(get_db)):
+    data = await request.json()
+    item_description = data.get("item_description")
     if not item_description:
-        return jsonify({"error": "Item description is required"}), 400
+        raise HTTPException(status_code=400, detail="Item description is required")
 
     query_embedding = co.embed(
         texts=[item_description], 
@@ -605,84 +550,62 @@ def rag_search():
         input_type="search_query"
     ).embeddings[0]
     
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT item_id, embedding <=> %s::vector as distance
-                FROM item_embeddings
-                ORDER BY distance ASC
-                LIMIT 1
-            """, (query_embedding,))
-            
-            result = cursor.fetchone()
-            if not result:
-                return jsonify({"error": "No matching items found"}), 404
-            # Change the response format to match what Swift expects    
-            return jsonify({"item_id": result[0]})  # Return as item_id, not item_id
+    result = db.execute("""
+        SELECT item_id, embedding <=> :query_embedding::vector as distance
+        FROM item_embeddings
+        ORDER BY distance ASC
+        LIMIT 1
+    """, {"query_embedding": query_embedding}).fetchone()
+        
+    if not result:
+        raise HTTPException(status_code=404, detail="No matching items found")
+    # Change the response format to match what Swift expects   
+    return {"item_id": result[0]}  # Return as item_id, not item_id
 
-@app.route('/api/links', methods=['GET'])
+@app.get('/api/links')
 @handle_errors
-def api_links():
+async def api_links(item_id: int = Query(..., description="ID of the item")):
     """
     Retrieve all links for a specific item.
     Requires item_id query parameter.
     Returns sorted list of links with their details.
     """
-    item_id = request.args.get('item_id')
-    if not item_id:
-        return jsonify({'error': 'Item ID is required'}), 400
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT id, photo_url, url, price, title, rating, reviews_count, merchant_name
-                FROM links 
-                WHERE item_id = %s
-                ORDER BY 
-                    CASE 
-                        WHEN rating IS NULL THEN 2
-                        ELSE 1
-                    END,
-                    rating DESC,
-                    reviews_count DESC
-            """, (item_id,))
-            
-            rows = cursor.fetchall()
-            
-            links = [{
-                'id': row[0],
-                'photo_url': row[1],
-                'url': row[2],
-                'price': row[3],
-                'title': row[4],
-                'rating': row[5],
-                'reviews_count': row[6],
-                'merchant_name': row[7]
-            } for row in rows]
-            
-            return jsonify(links)
+    db = SessionLocal()
+    
+    links = db.query(Link).filter(Link.item_id == item_id).order_by(
+        Link.rating.desc(),
+        Link.reviews_count.desc()
+    ).all()
 
-@app.route('/api/items', methods=['GET'])
+    formatted_links = [{
+        'id': link.id,
+        'photo_url': link.photo_url,
+        'url': link.url,
+        'price': link.price,
+        'title': link.title,
+        'rating': link.rating,
+        'reviews_count': link.reviews_count,
+        'merchant_name': link.merchant_name
+    } for link in links]
+    db.close()
+    return formatted_links
+
+@app.get('/api/items')
 @handle_errors
-def api_items():
+async def api_items(outfit_id: int = Query(..., description="ID of the outfit")):
     """
     Retrieve all items for a specific outfit.
     Requires outfit_id query parameter.
     Returns items with their associated links.
     """
-    outfit_id = request.args.get('outfit_id')
-    if not outfit_id:
-        return jsonify({'error': 'Outfit ID is required'}), 400
-    try:
-        outfit_id = int(outfit_id)
-    except ValueError:
-        return jsonify({'error': 'Invalid outfit ID format'}), 400
-        
-    items = get_items_from_db(outfit_id)
+    
+    db = SessionLocal()
+    items = get_items_from_db(db, outfit_id)
     if items is None:
-        return jsonify({'error': 'Database error'}), 500
+        raise HTTPException(status_code=500, detail='Database error')
     if len(items) == 0:
-        return jsonify({'error': 'No items found for this outfit'}), 404
+        raise HTTPException(status_code=404, detail='No items found for this outfit')
         
     # Clean URLs in response
     for item in items:
@@ -690,269 +613,227 @@ def api_items():
             for link in item['links']:
                 if 'url' in link:
                     link['url'] = clean_url(link['url'])
-    return jsonify(items)
+    db.close()
+    return items
 
-@app.route('/api/data_all', methods=['GET'])
+@app.get('/api/data_all')
 @handle_errors
-def api_data_all():
+async def api_data_all(
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, description="Items per page")
+):
     """
     Retrieve paginated list of all outfits.
     Supports page and per_page query parameters for pagination.
     """
-    page = request.args.get('page', default=1, type=int)
-    per_page = request.args.get('per_page', default=10, type=int)
     
-    data = get_all_data_from_db(page, per_page)
+    db = SessionLocal()
+    data = get_all_data_from_db(db, page, per_page)
     if data is None:
-        return jsonify({'error': 'Database error'}), 500
+        raise HTTPException(status_code=500, detail='Database error')
     if len(data) == 0:
-        return jsonify({'error': 'No outfits found'}), 404
+        raise HTTPException(status_code=404, detail='No outfits found')
         
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
                  for outfit_id, image_data, description in data]
-    
-    return jsonify({
+    db.close()
+    return {
         'outfits': data_list,
         'has_more': len(data_list) == per_page
-    })
+    }
 
-@app.route('/api/data', methods=['GET'])
+@app.get('/api/data')
 @handle_errors
-def api_data():
+async def api_data(
+    phone_number: str = Query(None, description="Phone number of the user"),
+    instagram_username: str = Query(None, description="Instagram username of the user"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, description="Items per page")
+):
     """
     Retrieve paginated list of outfits for a phone number and/or Instagram username.
     """
-    phone_number = request.args.get('phone_number')
-    instagram_username = request.args.get('instagram_username')
-    page = request.args.get('page', default=1, type=int)
-    per_page = request.args.get('per_page', default=10, type=int)
-    
+   
     if not phone_number and not instagram_username:
-        return jsonify({'error': 'Either phone number or Instagram username is required'}), 400
+        raise HTTPException(status_code=400, detail='Either phone number or Instagram username is required')
         
     if phone_number:
         phone_number = format_phone_number(phone_number)
     if instagram_username:
         instagram_username = instagram_username.lstrip('@')
     
-    data = get_data_from_db_combined(phone_number, instagram_username, page, per_page)
+    db = SessionLocal()
+    data = get_data_from_db_combined(db, phone_number, instagram_username, page, per_page)
     
     if data is None:
-        return jsonify({'error': 'Database error'}), 500
+        raise HTTPException(status_code=500, detail='Database error')
     if len(data) == 0:
-        return jsonify({'error': 'No outfits found'}), 404
+        raise HTTPException(status_code=404, detail='No outfits found')
         
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
                  for outfit_id, image_data, description in data]
-    
-    return jsonify({
+    db.close()
+    return {
         'outfits': data_list,
         'has_more': len(data_list) == per_page
-    })
+    }
 
-# ===============================
-# Application Initialization
-# ===============================
-
-# Initialize Cohere client
-try:
-    co = cohere.Client(COHERE_API_KEY)
-except Exception as e:
-    app.logger.error(f"Cohere client initialization error: {str(e)}")
-    raise
-
-def initialize_app():
-    """Initialize the application and set up necessary components."""
-    validate_environment()
-    try:
-        generate_and_store_embeddings()
-    except Exception as e:
-        app.logger.error(f"Failed to generate embeddings: {str(e)}")
 
 # Create initialization route
-@app.route('/initialize', methods=['POST'])
+@app.on_event("startup")
 @handle_errors
-def init_route():
+async def startup_event():
     """Route to trigger initialization - should be called once after deployment"""
-    initialize_app()
-    return jsonify({"status": "initialization complete"})
+    db = SessionLocal()
+    initialize_app(db)
+    db.close()
+    print("initialization complete")
 
 
 # Add new database function for Instagram username queries
 # Add new route for Instagram username queries
-@app.route('/api/data/instagram', methods=['GET'])
+@app.get('/api/data/instagram')
 @handle_errors
-def api_data_instagram():
+async def api_data_instagram(
+    instagram_username: str = Query(..., description="Instagram username of the user"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, description="Items per page")
+):
     """
     Retrieve paginated list of outfits for a specific Instagram username.
     Requires instagram_username query parameter.
     Supports page and per_page query parameters for pagination.
     """
-    instagram_username = request.args.get('instagram_username')
-    page = request.args.get('page', default=1, type=int)
-    per_page = request.args.get('per_page', default=10, type=int)
-    
-    if not instagram_username:
-        return jsonify({'error': 'Instagram username is required'}), 400
-        
+   
     # Remove @ symbol if present
     instagram_username = instagram_username.lstrip('@')
     
-    data = get_data_from_db_by_instagram(instagram_username, page, per_page)
+    db = SessionLocal()
+    data = get_data_from_db_by_instagram(db, instagram_username, page, per_page)
     
     if data is None:
-        return jsonify({'error': 'Database error'}), 500
+        raise HTTPException(status_code=500, detail='Database error')
     if len(data) == 0:
-        return jsonify({'error': f'No outfits found for Instagram username: {instagram_username}'}), 404
+        raise HTTPException(status_code=404, detail=f'No outfits found for Instagram username: {instagram_username}')
         
     data_list = [{'outfit_id': outfit_id, 'image_data': image_data, 'description': description} 
                  for outfit_id, image_data, description in data]
-    
-    return jsonify({
+    db.close()
+    return {
         'outfits': data_list,
         'has_more': len(data_list) == per_page
-    })
+    }
 
 # ===============================
-# Main Entry Point
+# Application Initialization
 # ===============================
 
+
+def initialize_app(db: SessionLocal):
+    """Initialize the application and set up necessary components."""
+    validate_environment()
+    try:
+        generate_and_store_embeddings(db)
+    except Exception as e:
+        print(f"Failed to generate embeddings: {str(e)}")
 
 # Add these functions after the other database operations
 
-def check_instagram_username(instagram_username):
+def check_instagram_username(db: SessionLocal, instagram_username: str):
     """
     Check if an Instagram username already exists in the database.
     Returns the associated phone number if found, None otherwise.
     """
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT phone_number 
-            FROM phone_numbers 
-            WHERE instagram_username = %s
-        """, (instagram_username,))
-        
-        result = cursor.fetchone()
+        result = db.query(PhoneNumber.phone_number).filter(PhoneNumber.instagram_username == instagram_username).first()
         return result[0] if result else None
         
     except Exception as e:
-        app.logger.error(f"Database error: {e}")
+        print(f"Database error: {e}")
         return None
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 # Add this after the other Instagram-related functions
 
-def unlink_instagram(phone_number):
+def unlink_instagram(db: SessionLocal, phone_number: str):
     """
     Remove Instagram username association from a phone number.
     Returns (success, message) tuple.
     """
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        cursor = conn.cursor()
-        
         # Format phone number
         phone_number = format_phone_number(phone_number)
         
         # Check if phone number exists
-        cursor.execute("""
-            SELECT id FROM phone_numbers 
-            WHERE phone_number = %s
-        """, (phone_number,))
-        
-        if not cursor.fetchone():
+        user = db.query(PhoneNumber).filter(PhoneNumber.phone_number == phone_number).first()
+        if not user:
             return False, "Phone number not found"
         
         # Remove Instagram username
-        cursor.execute("""
-            UPDATE phone_numbers 
-            SET instagram_username = NULL 
-            WHERE phone_number = %s
-            RETURNING id
-        """, (phone_number,))
-        
-        conn.commit()
+        user.instagram_username = None
+        db.commit()
         return True, "Successfully unlinked Instagram username"
         
     except Exception as e:
-        conn.rollback()
-        app.logger.error(f"Database error: {e}")
+        db.rollback()
+        print(f"Database error: {e}")
         return False, str(e)
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 # Modify the existing link_instagram route to match Swift app expectations
-@app.route('/api/instagram/link', methods=['POST'])
+@app.post('/api/instagram/link')
 @handle_errors
-def link_instagram():
+async def link_instagram(request: Request, db: SessionLocal = Depends(get_db)):
     """
     Link an Instagram username to an existing phone number.
     """
-    data = request.get_json()
+    data = await request.json()
     phone_number = data.get('phone_number')
     instagram_username = data.get('instagram_username')
     
     if not phone_number or not instagram_username:
-        return jsonify({'error': 'Both phone number and Instagram username are required'}), 400
+        raise HTTPException(status_code=400, detail='Both phone number and Instagram username are required')
     
-    success, message = link_instagram_to_phone(phone_number, instagram_username)
+    success, message = link_instagram_to_phone(db, phone_number, instagram_username)
     
     if success:
-        return jsonify({'username': instagram_username}), 200
+        return {"username": instagram_username}
     else:
-        return jsonify({'error': message}), 400
+        raise HTTPException(status_code=400, detail=message)
 
 # Add new unlink endpoint
-@app.route('/api/instagram/unlink', methods=['POST'])
+@app.post('/api/instagram/unlink')
 @handle_errors
-def unlink_instagram_route():
+async def unlink_instagram_route(request: Request, db: SessionLocal = Depends(get_db)):
     """
     Remove Instagram username association from a phone number.
     """
-    data = request.get_json()
+    data = await request.json()
     phone_number = data.get('phone_number')
     
     if not phone_number:
-        return jsonify({'error': 'Phone number is required'}), 400
+        raise HTTPException(status_code=400, detail='Phone number is required')
     
-    success, message = unlink_instagram(phone_number)
+    success, message = unlink_instagram(db, phone_number)
     
     if success:
-        return jsonify({'message': message}), 200
+        return {'message': message}
     else:
-        return jsonify({'error': message}), 400
+        raise HTTPException(status_code=400, detail=message)
+
 # Add new routes
-@app.route('/api/instagram/check', methods=['GET'])
+@app.get('/api/instagram/check')
 @handle_errors
-def check_instagram():
+async def check_instagram(
+    instagram_username: str = Query(..., description="Instagram username to check")
+):
     """
     Check if an Instagram username is already in use.
     """
-    instagram_username = request.args.get('instagram_username')
-    if not instagram_username:
-        return jsonify({'error': 'Instagram username is required'}), 400
-        
+
     instagram_username = instagram_username.lstrip('@')
-    existing_phone = check_instagram_username(instagram_username)
-    
-    return jsonify({
+    db = SessionLocal()
+    existing_phone = check_instagram_username(db, instagram_username)
+    db.close()
+    return {
         'is_taken': existing_phone is not None,
         'phone_number': existing_phone if existing_phone else None
-    })
-
-
-
-if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
-    
+    }
