@@ -138,50 +138,54 @@ def get_data_from_db_combined(phone_number=None, instagram_username=None, page=1
             cursor.close()
         if conn:
             conn.close()
+            
 def link_instagram_to_phone(phone_number, instagram_username):
     """
-    Link an Instagram username to an existing phone number.
+    Link an Instagram username to a phone number. Creates the phone number record if it doesn't exist.
     Returns (success, message) tuple.
     """
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
-
-        # Format phone number
+        
+        # Format inputs
         phone_number = format_phone_number(phone_number)
-        # Remove @ symbol if present
         instagram_username = instagram_username.lstrip('@')
+        print(f"Processing link request for phone: {phone_number}, instagram: {instagram_username}")
 
-        # First check if phone number exists
-        cursor.execute("""
-            SELECT id FROM phone_numbers 
-            WHERE phone_number = %s
-        """, (phone_number,))
-
-        if not cursor.fetchone():
-            return False, "Phone number not found"
-
-        # Then check if Instagram username is already taken by another user
+        # Check if Instagram username is already taken by another user
         cursor.execute("""
             SELECT phone_number FROM phone_numbers 
             WHERE instagram_username = %s AND phone_number != %s
         """, (instagram_username, phone_number))
-
         existing = cursor.fetchone()
         if existing:
             return False, "Instagram username already linked to another account"
 
-        # Update the record
+        # Try to update existing record first
         cursor.execute("""
             UPDATE phone_numbers 
             SET instagram_username = %s 
             WHERE phone_number = %s
             RETURNING id
         """, (instagram_username, phone_number))
+        
+        result = cursor.fetchone()
+        
+        # If no existing record was updated, create a new one
+        if not result:
+            cursor.execute("""
+                INSERT INTO phone_numbers (phone_number, instagram_username, is_activated)
+                VALUES (%s, %s, false)
+                RETURNING id
+            """, (phone_number, instagram_username))
+            print(f"Created new phone record for {phone_number}")
+        else:
+            print(f"Updated existing phone record for {phone_number}")
 
         conn.commit()
         return True, "Successfully linked Instagram username"
-
+        
     except Exception as e:
         conn.rollback()
         app.logger.error(f"Database error: {e}")
