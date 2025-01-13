@@ -196,7 +196,7 @@ def format_phone_number(phone_number):
     """
     Standardize phone number format to include +1 prefix and remove special characters.
     """
-    phone_number = phone_number.strip().replace("-", "").replace("(", "").replace(")", "").replace(" ", "")
+    phone_number = phone_number.strip().replace("-", "").replace("(", "").replace(")", "").replace(" ", "").replace("%","")
     if not phone_number.startswith("+1"):
         phone_number = "+1" + phone_number
     return phone_number
